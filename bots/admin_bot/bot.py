@@ -2,10 +2,12 @@ import asyncio
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
 
+from config.settings import settings
+
 
 async def start_bot():
     bot = Bot(
-        token="TEST_TOKEN",
+        token=settings.admin_bot_token,
         parse_mode=ParseMode.HTML
     )
 
