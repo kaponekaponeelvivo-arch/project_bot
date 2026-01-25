@@ -34,6 +34,39 @@ class AdminOnlyCallbackFilter(BaseFilter):
         return callback.from_user.id == settings.admin_telegram_id
 
 
+# ========= HELPERS =========
+
+async def render_user_card(callback: CallbackQuery, telegram_id: int):
+    user = users_service.get_user(telegram_id)
+
+    if not user:
+        await callback.answer("User not found", show_alert=True)
+        return
+
+    now = datetime.utcnow()
+    if user.subscription_until:
+        if user.subscription_until > now:
+            sub_status = f"🟢 Active until {user.subscription_until.strftime('%Y-%m-%d')}"
+        else:
+            sub_status = f"🔴 Expired ({user.subscription_until.strftime('%Y-%m-%d')})"
+    else:
+        sub_status = "❌ No subscription"
+
+    text = (
+        "👤 <b>User card</b>\n\n"
+        f"ID: <b>{user.telegram_id}</b>\n"
+        f"Username: @{user.username or '-'}\n"
+        f"Status: {'🟢 Active' if user.is_active else '🔴 Blocked'}\n\n"
+        f"💳 Subscription:\n{sub_status}"
+    )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=user_card_keyboard(user)
+    )
+    await callback.answer()
+
+
 # ========= HANDLERS =========
 
 async def start_handler(message: Message):
@@ -50,7 +83,6 @@ async def start_handler(message: Message):
 
 
 async def menu_handler(callback: CallbackQuery):
-    # ОБРАБАТЫВАЕМ ТОЛЬКО РАЗДЕЛЫ
     section = callback.data.replace("menu_", "")
 
     if section == "users":
@@ -91,46 +123,34 @@ async def menu_handler(callback: CallbackQuery):
 
 async def user_open_handler(callback: CallbackQuery):
     telegram_id = int(callback.data.split(":")[1])
-    user = users_service.get_user(telegram_id)
-
-    if not user:
-        await callback.answer("User not found", show_alert=True)
-        return
-
-    now = datetime.utcnow()
-    if user.subscription_until:
-        if user.subscription_until > now:
-            sub_status = f"🟢 Active until {user.subscription_until.strftime('%Y-%m-%d')}"
-        else:
-            sub_status = f"🔴 Expired ({user.subscription_until.strftime('%Y-%m-%d')})"
-    else:
-        sub_status = "❌ No subscription"
-
-    text = (
-        "👤 <b>User card</b>\n\n"
-        f"ID: <b>{user.telegram_id}</b>\n"
-        f"Username: @{user.username or '-'}\n"
-        f"Status: {'🟢 Active' if user.is_active else '🔴 Blocked'}\n\n"
-        f"💳 Subscription:\n{sub_status}"
-    )
-
-    await callback.message.edit_text(
-        text,
-        reply_markup=user_card_keyboard(user)
-    )
-    await callback.answer()
+    await render_user_card(callback, telegram_id)
 
 
 async def user_block_handler(callback: CallbackQuery):
     telegram_id = int(callback.data.split(":")[1])
     users_service.block_user(telegram_id)
-    await user_open_handler(callback)
+    await render_user_card(callback, telegram_id)
 
 
 async def user_unblock_handler(callback: CallbackQuery):
     telegram_id = int(callback.data.split(":")[1])
     users_service.unblock_user(telegram_id)
-    await user_open_handler(callback)
+    await render_user_card(callback, telegram_id)
+
+
+# ===== SUBSCRIPTION ACTIONS =====
+
+async def user_sub_add_handler(callback: CallbackQuery):
+    _, days, telegram_id = callback.data.split(":")
+    telegram_id = int(telegram_id)
+    users_service.give_subscription(telegram_id, int(days))
+    await render_user_card(callback, telegram_id)
+
+
+async def user_sub_remove_handler(callback: CallbackQuery):
+    telegram_id = int(callback.data.split(":")[1])
+    users_service.remove_subscription(telegram_id)
+    await render_user_card(callback, telegram_id)
 
 
 async def back_to_menu_handler(callback: CallbackQuery):
@@ -146,9 +166,7 @@ async def back_to_menu_handler(callback: CallbackQuery):
 async def start_bot():
     bot = Bot(
         token=settings.admin_bot_token,
-        default=DefaultBotProperties(
-            parse_mode=ParseMode.HTML
-        )
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
 
     dp = Dispatcher()
@@ -176,6 +194,18 @@ async def start_bot():
     dp.callback_query.register(
         user_unblock_handler,
         lambda c: c.data.startswith("user_unblock:"),
+        AdminOnlyCallbackFilter()
+    )
+
+    dp.callback_query.register(
+        user_sub_add_handler,
+        lambda c: c.data.startswith("user_sub_add:"),
+        AdminOnlyCallbackFilter()
+    )
+
+    dp.callback_query.register(
+        user_sub_remove_handler,
+        lambda c: c.data.startswith("user_sub_remove:"),
         AdminOnlyCallbackFilter()
     )
 
