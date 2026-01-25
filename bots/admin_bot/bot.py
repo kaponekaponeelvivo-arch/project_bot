@@ -4,6 +4,8 @@ from aiogram.filters import CommandStart, BaseFilter
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 
+from datetime import datetime
+
 from config.settings import settings
 from bots.admin_bot.menu import (
     main_menu_keyboard,
@@ -20,6 +22,8 @@ users_storage = UsersStorage()
 users_service = UsersService(users_storage)
 
 
+# ========= FILTERS =========
+
 class AdminOnlyFilter(BaseFilter):
     async def __call__(self, message: Message) -> bool:
         return message.from_user.id == settings.admin_telegram_id
@@ -29,6 +33,8 @@ class AdminOnlyCallbackFilter(BaseFilter):
     async def __call__(self, callback: CallbackQuery) -> bool:
         return callback.from_user.id == settings.admin_telegram_id
 
+
+# ========= HANDLERS =========
 
 async def start_handler(message: Message):
     if not users_service.get_user(message.from_user.id):
@@ -44,6 +50,7 @@ async def start_handler(message: Message):
 
 
 async def menu_handler(callback: CallbackQuery):
+    # ОБРАБАТЫВАЕМ ТОЛЬКО РАЗДЕЛЫ
     section = callback.data.replace("menu_", "")
 
     if section == "users":
@@ -71,8 +78,12 @@ async def menu_handler(callback: CallbackQuery):
         "system": "⚙️ <b>System</b>\n\nВ разработке.",
     }
 
+    if section not in texts:
+        await callback.answer()
+        return
+
     await callback.message.edit_text(
-        texts.get(section, "Unknown section"),
+        texts[section],
         reply_markup=back_keyboard()
     )
     await callback.answer()
@@ -86,11 +97,21 @@ async def user_open_handler(callback: CallbackQuery):
         await callback.answer("User not found", show_alert=True)
         return
 
+    now = datetime.utcnow()
+    if user.subscription_until:
+        if user.subscription_until > now:
+            sub_status = f"🟢 Active until {user.subscription_until.strftime('%Y-%m-%d')}"
+        else:
+            sub_status = f"🔴 Expired ({user.subscription_until.strftime('%Y-%m-%d')})"
+    else:
+        sub_status = "❌ No subscription"
+
     text = (
         "👤 <b>User card</b>\n\n"
         f"ID: <b>{user.telegram_id}</b>\n"
         f"Username: @{user.username or '-'}\n"
-        f"Status: {'🟢 Active' if user.is_active else '🔴 Blocked'}"
+        f"Status: {'🟢 Active' if user.is_active else '🔴 Blocked'}\n\n"
+        f"💳 Subscription:\n{sub_status}"
     )
 
     await callback.message.edit_text(
@@ -112,13 +133,15 @@ async def user_unblock_handler(callback: CallbackQuery):
     await user_open_handler(callback)
 
 
-async def back_handler(callback: CallbackQuery):
+async def back_to_menu_handler(callback: CallbackQuery):
     await callback.message.edit_text(
         "✅ <b>Admin panel</b>\n\nChoose a section:",
         reply_markup=main_menu_keyboard()
     )
     await callback.answer()
 
+
+# ========= BOT START =========
 
 async def start_bot():
     bot = Bot(
@@ -134,7 +157,7 @@ async def start_bot():
 
     dp.callback_query.register(
         menu_handler,
-        lambda c: c.data.startswith("menu_"),
+        lambda c: c.data.startswith("menu_") and c.data != "menu_back",
         AdminOnlyCallbackFilter()
     )
 
@@ -153,6 +176,12 @@ async def start_bot():
     dp.callback_query.register(
         user_unblock_handler,
         lambda c: c.data.startswith("user_unblock:"),
+        AdminOnlyCallbackFilter()
+    )
+
+    dp.callback_query.register(
+        back_to_menu_handler,
+        lambda c: c.data == "menu_back",
         AdminOnlyCallbackFilter()
     )
 
