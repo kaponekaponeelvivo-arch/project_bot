@@ -89,6 +89,7 @@ async def start_handler(message: Message):
 async def menu_handler(callback: CallbackQuery):
     section = callback.data.replace("menu_", "")
 
+    # ---------- USERS ----------
     if section == "users":
         users = await users_service.get_all_users()
 
@@ -108,10 +109,37 @@ async def menu_handler(callback: CallbackQuery):
         await callback.answer()
         return
 
+    # ---------- REFERRALS ----------
+    if section == "referrals":
+        total_joins = await users_storage.total_ref_joins()
+        total_purchases = await users_storage.total_ref_purchases()
+        top = await users_storage.top_referrers()
+
+        text = (
+            "🎯 <b>Referrals statistics</b>\n\n"
+            f"👥 Total joins: <b>{total_joins}</b>\n"
+            f"💳 Total purchases: <b>{total_purchases}</b>\n\n"
+            "🏆 <b>Top 10 referrers</b>\n"
+        )
+
+        if not top:
+            text += "\nNo referral purchases yet."
+        else:
+            for i, (ref_id, cnt) in enumerate(top, start=1):
+                text += f"\n{i}. <code>{ref_id}</code> — {cnt}"
+
+        await callback.message.edit_text(
+            text,
+            reply_markup=back_keyboard(),
+            parse_mode=ParseMode.HTML
+        )
+        await callback.answer()
+        return
+
+    # ---------- OTHER SECTIONS ----------
     texts = {
         "subscriptions": "💳 <b>Subscriptions</b>\n\nIn progress.",
         "screeners": "🤖 <b>Screeners</b>\n\nIn progress.",
-        "referrals": "🎯 <b>Referrals</b>\n\nIn progress.",
         "stats": "📈 <b>Stats</b>\n\nIn progress.",
         "system": "⚙️ <b>System</b>\n\nIn progress.",
     }
@@ -147,7 +175,7 @@ async def user_unblock_handler(callback: CallbackQuery):
 
 async def user_sub_add_handler(callback: CallbackQuery):
     _, days, telegram_id = callback.data.split(":")
-    await subscriptions_service.add_subscription(
+    await subscriptions_service.add_admin_subscription(
         telegram_id=int(telegram_id),
         days=int(days),
         plan=f"{days}d",
