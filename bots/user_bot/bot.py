@@ -8,7 +8,10 @@ from config.settings import settings
 from core.services.users import UsersService
 
 
-users_service = UsersService()
+from core.storage.postgres_users import PostgresUsersStorage
+
+users_storage = PostgresUsersStorage()
+users_service = UsersService(users_storage)
 
 
 async def start_handler(message: Message):

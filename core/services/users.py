@@ -1,11 +1,12 @@
-from datetime import datetime, timedelta
+from datetime import datetime
+
 from core.db.models.user import User
 from core.storage.postgres_users import PostgresUsersStorage
 
 
 class UsersService:
-    def __init__(self):
-        self.storage = PostgresUsersStorage()
+    def __init__(self, storage: PostgresUsersStorage):
+        self.storage = storage
 
     async def create_user(
         self,
@@ -25,6 +26,7 @@ class UsersService:
 
         await self.storage.add(user)
 
+        # referral logic
         if referred_by:
             referrer = await self.storage.get(referred_by)
             if referrer:
@@ -37,7 +39,7 @@ class UsersService:
         return await self.storage.get(telegram_id)
 
     async def get_all_users(self):
-        return await self.storage.all()
+        return await self.storage.get_all()
 
     async def block_user(self, telegram_id: int):
         user = await self.get_user(telegram_id)
@@ -50,29 +52,3 @@ class UsersService:
         if user:
             user.is_active = True
             await self.storage.update(user)
-
-    async def give_subscription(self, telegram_id: int, days: int):
-        user = await self.get_user(telegram_id)
-        if not user:
-            return
-
-        now = datetime.utcnow()
-
-        if user.subscription_until and user.subscription_until > now:
-            user.subscription_until += timedelta(days=days)
-        else:
-            user.subscription_until = now + timedelta(days=days)
-
-        await self.storage.update(user)
-
-    async def remove_subscription(self, telegram_id: int):
-        user = await self.get_user(telegram_id)
-        if user:
-            user.subscription_until = None
-            await self.storage.update(user)
-
-    async def has_active_subscription(self, telegram_id: int) -> bool:
-        user = await self.get_user(telegram_id)
-        if not user or not user.subscription_until:
-            return False
-        return user.subscription_until > datetime.utcnow()

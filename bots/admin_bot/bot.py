@@ -14,10 +14,16 @@ from bots.admin_bot.menu import (
     user_card_keyboard,
 )
 
+from core.storage.postgres_users import PostgresUsersStorage
 from core.services.users import UsersService
+from core.services.subscriptions import SubscriptionsService
 
 
-users_service = UsersService()
+# ========= SERVICES =========
+
+users_storage = PostgresUsersStorage()
+users_service = UsersService(users_storage)
+subscriptions_service = SubscriptionsService(users_storage)
 
 
 # ========= FILTERS =========
@@ -42,20 +48,21 @@ async def render_user_card(callback: CallbackQuery, telegram_id: int):
         return
 
     now = datetime.utcnow()
+
     if user.subscription_until:
         if user.subscription_until > now:
-            sub_status = f"ACTIVE until {user.subscription_until.strftime('%Y-%m-%d')}"
+            sub_status = f"🟢 Active until {user.subscription_until.strftime('%Y-%m-%d')}"
         else:
-            sub_status = f"EXPIRED ({user.subscription_until.strftime('%Y-%m-%d')})"
+            sub_status = f"🔴 Expired ({user.subscription_until.strftime('%Y-%m-%d')})"
     else:
-        sub_status = "NO SUBSCRIPTION"
+        sub_status = "❌ No subscription"
 
     text = (
-        "<b>User card</b>\n\n"
+        "👤 <b>User card</b>\n\n"
         f"ID: <b>{user.telegram_id}</b>\n"
         f"Username: @{user.username or '-'}\n"
-        f"Status: {'ACTIVE' if user.is_active else 'BLOCKED'}\n\n"
-        f"Subscription:\n{sub_status}"
+        f"Status: {'🟢 Active' if user.is_active else '🔴 Blocked'}\n\n"
+        f"💳 Subscription:\n{sub_status}"
     )
 
     await callback.message.edit_text(
@@ -75,7 +82,7 @@ async def start_handler(message: Message):
         )
 
     await message.answer(
-        "<b>Admin panel</b>\n\nChoose section:",
+        "✅ <b>Admin panel</b>\n\nChoose a section:",
         reply_markup=main_menu_keyboard()
     )
 
@@ -88,12 +95,12 @@ async def menu_handler(callback: CallbackQuery):
 
         if not users:
             await callback.message.edit_text(
-                "<b>Users</b>\n\nNo users yet.",
+                "📊 <b>Users</b>\n\nNo users yet.",
                 reply_markup=back_keyboard()
             )
         else:
             await callback.message.edit_text(
-                "<b>Users</b>\n\nSelect user:",
+                "📊 <b>Users</b>\n\nSelect user:",
                 reply_markup=users_list_keyboard(users)
             )
 
@@ -101,21 +108,19 @@ async def menu_handler(callback: CallbackQuery):
         return
 
     texts = {
-        "subscriptions": "<b>Subscriptions</b>\n\nIn development.",
-        "screeners": "<b>Screeners</b>\n\nIn development.",
-        "referrals": "<b>Referrals</b>\n\nIn development.",
-        "stats": "<b>Stats</b>\n\nIn development.",
-        "system": "<b>System</b>\n\nIn development.",
+        "subscriptions": "💳 <b>Subscriptions</b>\n\nIn development.",
+        "screeners": "🤖 <b>Screeners</b>\n\nIn development.",
+        "referrals": "🎯 <b>Referrals</b>\n\nIn development.",
+        "stats": "📈 <b>Stats</b>\n\nIn development.",
+        "system": "⚙️ <b>System</b>\n\nIn development.",
     }
 
-    if section not in texts:
-        await callback.answer()
-        return
+    if section in texts:
+        await callback.message.edit_text(
+            texts[section],
+            reply_markup=back_keyboard()
+        )
 
-    await callback.message.edit_text(
-        texts[section],
-        reply_markup=back_keyboard()
-    )
     await callback.answer()
 
 
@@ -136,24 +141,26 @@ async def user_unblock_handler(callback: CallbackQuery):
     await render_user_card(callback, telegram_id)
 
 
-# ===== SUBSCRIPTION ACTIONS =====
+# ===== SUBSCRIPTIONS =====
 
 async def user_sub_add_handler(callback: CallbackQuery):
     _, days, telegram_id = callback.data.split(":")
-    telegram_id = int(telegram_id)
-    await users_service.give_subscription(telegram_id, int(days))
-    await render_user_card(callback, telegram_id)
+    await subscriptions_service.add_subscription(
+        telegram_id=int(telegram_id),
+        days=int(days),
+    )
+    await render_user_card(callback, int(telegram_id))
 
 
 async def user_sub_remove_handler(callback: CallbackQuery):
     telegram_id = int(callback.data.split(":")[1])
-    await users_service.remove_subscription(telegram_id)
+    await subscriptions_service.remove_subscription(telegram_id)
     await render_user_card(callback, telegram_id)
 
 
 async def back_to_menu_handler(callback: CallbackQuery):
     await callback.message.edit_text(
-        "<b>Admin panel</b>\n\nChoose section:",
+        "✅ <b>Admin panel</b>\n\nChoose a section:",
         reply_markup=main_menu_keyboard()
     )
     await callback.answer()

@@ -13,18 +13,15 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
+# Metadata for autogenerate
 target_metadata = Base.metadata
 
 
 def get_sync_url() -> str:
     """
-    Convert async DATABASE_URL to sync for Alembic
-    asyncpg -> psycopg2
+    Sync database URL for Alembic
     """
-    return settings.database_url.replace(
-        "postgresql+asyncpg",
-        "postgresql+psycopg2"
-    )
+    return settings.database_url_sync
 
 
 def run_migrations_offline():

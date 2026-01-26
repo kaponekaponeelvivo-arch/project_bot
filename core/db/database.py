@@ -1,5 +1,16 @@
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from sqlalchemy.ext.asyncio import (
+    create_async_engine,
+    async_sessionmaker,
+    AsyncSession,
+)
+from sqlalchemy.orm import DeclarativeBase
+
 from config.settings import settings
+
+
+class Base(DeclarativeBase):
+    pass
+
 
 DATABASE_URL = (
     f"postgresql+asyncpg://{settings.db_user}:"
@@ -7,9 +18,13 @@ DATABASE_URL = (
     f"{settings.db_port}/{settings.db_name}"
 )
 
-engine = create_async_engine(DATABASE_URL, echo=False)
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,
+)
 
 AsyncSessionLocal = async_sessionmaker(
-    engine,
-    expire_on_commit=False
+    bind=engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
 )
