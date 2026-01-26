@@ -6,13 +6,14 @@ from aiogram.client.default import DefaultBotProperties
 
 from config.settings import settings
 from core.services.users import UsersService
+from core.services.subscription_gate import SubscriptionGate
 
 
-from core.storage.postgres_users import PostgresUsersStorage
+users_service = UsersService()
+subscription_gate = SubscriptionGate()
 
-users_storage = PostgresUsersStorage()
-users_service = UsersService(users_storage)
 
+# ========= HANDLERS =========
 
 async def start_handler(message: Message):
     args = message.text.split()
@@ -34,8 +35,10 @@ async def start_handler(message: Message):
         )
 
     await message.answer(
-        "Welcome!\n\n"
-        "Use /ref to get your referral link."
+        "👋 <b>Welcome!</b>\n\n"
+        "• Use /ref to get your referral link\n"
+        "• Subscription is required to access features",
+        parse_mode=ParseMode.HTML
     )
 
 
@@ -50,12 +53,28 @@ async def ref_handler(message: Message):
     ref_link = f"https://t.me/{bot_username}?start=ref_{user.telegram_id}"
 
     await message.answer(
-        "<b>Your referral link</b>\n\n"
+        "🎯 <b>Your referral link</b>\n\n"
         f"{ref_link}\n\n"
-        f"Invited users: <b>{user.referrals_count}</b>",
+        f"👥 Invited users: <b>{user.referrals_count}</b>",
         parse_mode=ParseMode.HTML
     )
 
+
+async def protected_example_handler(message: Message):
+    has_access = await subscription_gate.has_access(message.from_user.id)
+
+    if not has_access:
+        await message.answer(
+            "⛔ <b>No active subscription</b>\n\n"
+            "Please purchase a subscription to continue.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    await message.answer("✅ You have access!")
+
+
+# ========= BOT START =========
 
 async def start_bot():
     bot = Bot(
@@ -67,5 +86,6 @@ async def start_bot():
 
     dp.message.register(start_handler, CommandStart())
     dp.message.register(ref_handler, lambda m: m.text == "/ref")
+    # dp.message.register(protected_example_handler, lambda m: m.text == "/test")
 
     await dp.start_polling(bot)

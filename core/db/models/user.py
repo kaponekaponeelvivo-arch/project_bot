@@ -8,18 +8,17 @@ Base = declarative_base()
 class User(Base):
     __tablename__ = "users"
 
-    # Telegram
     telegram_id = Column(BigInteger, primary_key=True, index=True)
     username = Column(String, nullable=True)
 
-    # System
-    created_at = Column(DateTime, default=datetime.utcnow)
-    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
 
-    # Subscription
+    # ===== SUBSCRIPTION =====
     subscription_until = Column(DateTime, nullable=True)
-    subscription_days = Column(Integer, nullable=True)  # NEW
+    subscription_plan = Column(String, nullable=True)  # "7d", "30d", "90d"
+    subscription_days_total = Column(Integer, nullable=False, default=0)
 
-    # Referrals
+    # ===== REFERRALS =====
     referred_by = Column(BigInteger, nullable=True)
-    referrals_count = Column(Integer, default=0)
+    referrals_count = Column(Integer, nullable=False, default=0)
