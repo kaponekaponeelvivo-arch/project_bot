@@ -4,7 +4,7 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from core.db.database import Base
-from core.db.models import user, subscription  # noqa: F401
+from core.db.models import user, subscription, market_filter, notification_limit
 from config.settings import settings
 
 
