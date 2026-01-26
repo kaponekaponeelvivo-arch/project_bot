@@ -86,3 +86,33 @@ DB_USER=
 DB_PASSWORD=
 
 ENV=dev
+
+
+
+
+____________________________________________
+
+
+## Architecture
+
+- Python 3.11
+- aiogram 3.x
+- PostgreSQL
+- SQLAlchemy (async)
+- Alembic (migrations)
+
+### Core layers
+- bots/
+  - admin_bot
+  - user_bot
+- core/
+  - db/
+  - storage/
+  - services/
+- tools/
+  - diag_contracts.py
+
+### Key principles
+- Services depend on Storage
+- Bots depend on Services
+- No direct DB access from bots

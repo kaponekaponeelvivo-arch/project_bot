@@ -1,13 +1,13 @@
 from sqlalchemy import select
-from core.db.models.user import User
 from core.db.database import AsyncSessionLocal
+from core.db.models.user import User
 
 
 class PostgresUsersStorage:
     def __init__(self):
         self.session_factory = AsyncSessionLocal
 
-    async def add(self, user: User) -> None:
+    async def add(self, user: User):
         async with self.session_factory() as session:
             session.add(user)
             await session.commit()
@@ -19,33 +19,12 @@ class PostgresUsersStorage:
             )
             return result.scalar_one_or_none()
 
-    async def get_all(self):
+    async def all(self) -> list[User]:
         async with self.session_factory() as session:
-            result = await session.execute(
-                select(User).order_by(User.created_at.desc())
-            )
+            result = await session.execute(select(User))
             return result.scalars().all()
 
-    async def update(self, user: User) -> None:
+    async def update(self, user: User):
         async with self.session_factory() as session:
             await session.merge(user)
-            await session.commit()
-
-    # ✅ НОВЫЙ МЕТОД — ДЛЯ SUBSCRIPTIONS SERVICE
-    async def update_subscription(
-        self,
-        telegram_id: int,
-        subscription_until,
-        subscription_days: int | None = None,
-    ) -> None:
-        async with self.session_factory() as session:
-            result = await session.execute(
-                select(User).where(User.telegram_id == telegram_id)
-            )
-            user = result.scalar_one_or_none()
-
-            if not user:
-                return
-
-            user.subscription_until = subscription_until
             await session.commit()

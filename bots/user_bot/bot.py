@@ -5,12 +5,17 @@ from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 
 from config.settings import settings
+
+from core.storage.postgres_users import PostgresUsersStorage
 from core.services.users import UsersService
 from core.services.subscription_gate import SubscriptionGate
 
 
-users_service = UsersService()
-subscription_gate = SubscriptionGate()
+# ========= DEPENDENCIES =========
+
+users_storage = PostgresUsersStorage()
+users_service = UsersService(users_storage)
+subscription_gate = SubscriptionGate(users_service)
 
 
 # ========= HANDLERS =========
@@ -35,9 +40,8 @@ async def start_handler(message: Message):
         )
 
     await message.answer(
-        "👋 <b>Welcome!</b>\n\n"
-        "• Use /ref to get your referral link\n"
-        "• Subscription is required to access features",
+        "👋 <b>Welcome</b>\n\n"
+        "Use /ref to get your referral link.",
         parse_mode=ParseMode.HTML
     )
 
@@ -49,8 +53,7 @@ async def ref_handler(message: Message):
         await message.answer("User not found")
         return
 
-    bot_username = settings.user_bot_username
-    ref_link = f"https://t.me/{bot_username}?start=ref_{user.telegram_id}"
+    ref_link = f"https://t.me/{settings.user_bot_username}?start=ref_{user.telegram_id}"
 
     await message.answer(
         "🎯 <b>Your referral link</b>\n\n"
@@ -58,20 +61,6 @@ async def ref_handler(message: Message):
         f"👥 Invited users: <b>{user.referrals_count}</b>",
         parse_mode=ParseMode.HTML
     )
-
-
-async def protected_example_handler(message: Message):
-    has_access = await subscription_gate.has_access(message.from_user.id)
-
-    if not has_access:
-        await message.answer(
-            "⛔ <b>No active subscription</b>\n\n"
-            "Please purchase a subscription to continue.",
-            parse_mode=ParseMode.HTML
-        )
-        return
-
-    await message.answer("✅ You have access!")
 
 
 # ========= BOT START =========
@@ -86,6 +75,5 @@ async def start_bot():
 
     dp.message.register(start_handler, CommandStart())
     dp.message.register(ref_handler, lambda m: m.text == "/ref")
-    # dp.message.register(protected_example_handler, lambda m: m.text == "/test")
 
     await dp.start_polling(bot)

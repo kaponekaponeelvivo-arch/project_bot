@@ -1,51 +1,47 @@
 from datetime import datetime, timedelta
 
-from core.storage.postgres_users import PostgresUsersStorage
+from core.services.users import UsersService
 
 
 class SubscriptionsService:
-    def __init__(self, users_storage: PostgresUsersStorage):
-        self.users_storage = users_storage
+    def __init__(self, users_service: UsersService):
+        self.users_service = users_service
 
-    async def add_subscription(self, telegram_id: int, days: int) -> None:
-        """
-        Add or extend subscription for user.
-        If subscription is active — extend from current expiration date.
-        If expired or missing — start from now.
-        """
-        user = await self.users_storage.get(telegram_id)
+    async def add_subscription(
+        self,
+        telegram_id: int,
+        days: int,
+        plan: str,
+    ):
+        user = await self.users_service.get_user(telegram_id)
         if not user:
             return
 
         now = datetime.utcnow()
 
+        # ===== subscription_until =====
         if user.subscription_until and user.subscription_until > now:
-            new_until = user.subscription_until + timedelta(days=days)
+            user.subscription_until += timedelta(days=days)
         else:
-            new_until = now + timedelta(days=days)
+            user.subscription_until = now + timedelta(days=days)
 
-        await self.users_storage.update_subscription(
-            telegram_id=telegram_id,
-            subscription_until=new_until,
-            subscription_days=days,
-        )
+        # ===== subscription_days_total =====
+        if user.subscription_days_total is None:
+            user.subscription_days_total = 0
 
-    async def remove_subscription(self, telegram_id: int) -> None:
-        """
-        Remove subscription completely.
-        """
-        await self.users_storage.update_subscription(
-            telegram_id=telegram_id,
-            subscription_until=None,
-            subscription_days=None,
-        )
+        user.subscription_days_total += days
 
-    async def has_active_subscription(self, telegram_id: int) -> bool:
-        """
-        Check if user has active subscription.
-        """
-        user = await self.users_storage.get(telegram_id)
-        if not user or not user.subscription_until:
-            return False
+        # ===== subscription_plan =====
+        user.subscription_plan = plan
 
-        return user.subscription_until > datetime.utcnow()
+        await self.users_service.storage.update(user)
+
+    async def remove_subscription(self, telegram_id: int):
+        user = await self.users_service.get_user(telegram_id)
+        if not user:
+            return
+
+        user.subscription_until = None
+        user.subscription_plan = None
+
+        await self.users_service.storage.update(user)
