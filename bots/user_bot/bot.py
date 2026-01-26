@@ -1,10 +1,13 @@
 from aiogram import Bot, Dispatcher
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery
 from aiogram.filters import CommandStart
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 
+from datetime import datetime
+
 from config.settings import settings
+from bots.user_bot.menu import main_menu, plans_menu, back_menu
 
 from core.storage.postgres_users import PostgresUsersStorage
 from core.services.users import UsersService
@@ -16,6 +19,33 @@ from core.services.subscription_gate import SubscriptionGate
 users_storage = PostgresUsersStorage()
 users_service = UsersService(users_storage)
 subscription_gate = SubscriptionGate(users_service)
+
+
+# ========= HELPERS =========
+
+async def send_main_menu(obj):
+    user = await users_service.get_user(obj.from_user.id)
+    has_subscription = (
+        user.subscription_until and user.subscription_until > datetime.utcnow()
+        if user else False
+    )
+
+    text = "👋 <b>Welcome to your dashboard</b>"
+    keyboard = main_menu(has_subscription)
+
+    if isinstance(obj, CallbackQuery):
+        await obj.message.edit_text(
+            text,
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML
+        )
+        await obj.answer()
+    else:
+        await obj.answer(
+            text,
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML
+        )
 
 
 # ========= HANDLERS =========
@@ -39,28 +69,122 @@ async def start_handler(message: Message):
             referred_by=referred_by,
         )
 
-    await message.answer(
-        "👋 <b>Welcome</b>\n\n"
-        "Use /ref to get your referral link.",
-        parse_mode=ParseMode.HTML
-    )
+    await send_main_menu(message)
 
 
-async def ref_handler(message: Message):
-    user = await users_service.get_user(message.from_user.id)
+async def menu_handler(callback: CallbackQuery):
+    data = callback.data
+    user = await users_service.get_user(callback.from_user.id)
 
-    if not user:
-        await message.answer("User not found")
+    # ---------- MY SUBSCRIPTION ----------
+    if data == "my_subscription":
+        if user and user.subscription_until and user.subscription_until > datetime.utcnow():
+            text = (
+                "👤 <b>Your subscription</b>\n\n"
+                "🟢 Status: Active\n"
+                f"📅 Valid until: {user.subscription_until.strftime('%Y-%m-%d')}\n"
+                f"📦 Plan: {user.subscription_plan}"
+            )
+        else:
+            text = (
+                "👤 <b>Your subscription</b>\n\n"
+                "🔴 Status: Inactive\n"
+                "💡 You don’t have an active subscription."
+            )
+
+        await callback.message.edit_text(
+            text,
+            reply_markup=back_menu(),
+            parse_mode=ParseMode.HTML
+        )
+        await callback.answer()
         return
 
-    ref_link = f"https://t.me/{settings.user_bot_username}?start=ref_{user.telegram_id}"
+    # ---------- BUY / EXTEND ----------
+    if data == "buy_subscription":
+        await callback.message.edit_text(
+            "💳 <b>Choose a subscription plan</b>",
+            reply_markup=plans_menu(),
+            parse_mode=ParseMode.HTML
+        )
+        await callback.answer()
+        return
 
-    await message.answer(
-        "🎯 <b>Your referral link</b>\n\n"
-        f"{ref_link}\n\n"
-        f"👥 Invited users: <b>{user.referrals_count}</b>",
-        parse_mode=ParseMode.HTML
-    )
+    if data.startswith("plan_"):
+        days = data.replace("plan_", "")
+        await callback.message.edit_text(
+            f"💳 <b>Subscription {days} days</b>\n\n"
+            "Payments will be available soon.\n"
+            "Please check back later.",
+            reply_markup=back_menu(),
+            parse_mode=ParseMode.HTML
+        )
+        await callback.answer()
+        return
+
+    # ---------- SCREENERS ----------
+    if data == "screeners":
+        await callback.message.edit_text(
+            "📡 <b>Screeners</b>\n\n"
+            "Market screeners will be available soon.\n"
+            "Stay tuned.",
+            reply_markup=back_menu(),
+            parse_mode=ParseMode.HTML
+        )
+        await callback.answer()
+        return
+
+    # ---------- ABOUT ----------
+    if data == "about":
+        await callback.message.edit_text(
+            "🤖 <b>About screener</b>\n\n"
+            "This bot detects market events:\n"
+            "• volatility spikes\n"
+            "• momentum changes\n"
+            "• unusual activity\n\n"
+            "It does NOT give buy/sell signals.\n"
+            "You stay in control of decisions.",
+            reply_markup=back_menu(),
+            parse_mode=ParseMode.HTML
+        )
+        await callback.answer()
+        return
+
+    # ---------- REFERRALS ----------
+    if data == "referrals":
+        ref_link = f"https://t.me/{settings.user_bot_username}?start=ref_{user.telegram_id}"
+        text = (
+            "🎯 <b>Referral program</b>\n\n"
+            "Invite users and earn rewards.\n\n"
+            f"Your referral link:\n{ref_link}\n\n"
+            f"👥 Invited users: <b>{user.referrals_count}</b>"
+        )
+
+        await callback.message.edit_text(
+            text,
+            reply_markup=back_menu(),
+            parse_mode=ParseMode.HTML
+        )
+        await callback.answer()
+        return
+
+    # ---------- SUPPORT ----------
+    if data == "support":
+        await callback.message.edit_text(
+            "🆘 <b>Support</b>\n\n"
+            "If you have any issues with payments\n"
+            "or subscription, please contact:\n\n"
+            "@fake_support_account",
+            reply_markup=back_menu(),
+            parse_mode=ParseMode.HTML
+        )
+        await callback.answer()
+        return
+
+    # ---------- BACK ----------
+    if data == "back_main":
+        await send_main_menu(callback)
+        return
 
 
 # ========= BOT START =========
@@ -74,6 +198,6 @@ async def start_bot():
     dp = Dispatcher()
 
     dp.message.register(start_handler, CommandStart())
-    dp.message.register(ref_handler, lambda m: m.text == "/ref")
+    dp.callback_query.register(menu_handler)
 
     await dp.start_polling(bot)
