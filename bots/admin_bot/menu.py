@@ -39,7 +39,15 @@ def users_list_keyboard(users):
 
 
 def user_card_keyboard(user):
-    buttons = []
+    buttons = [
+        [
+            InlineKeyboardButton(text="➕ +7 days", callback_data=f"user_sub_add:7:{user.telegram_id}"),
+            InlineKeyboardButton(text="➕ +30 days", callback_data=f"user_sub_add:30:{user.telegram_id}"),
+        ],
+        [
+            InlineKeyboardButton(text="❌ Remove subscription", callback_data=f"user_sub_remove:{user.telegram_id}")
+        ],
+    ]
 
     if user.is_active:
         buttons.append(
