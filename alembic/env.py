@@ -3,7 +3,8 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from core.db.models.user import Base
+from core.db.database import Base
+from core.db.models import user, subscription  # noqa: F401
 from config.settings import settings
 
 
@@ -38,9 +39,7 @@ def run_migrations_offline():
 
 def run_migrations_online():
     connectable = engine_from_config(
-        {
-            "sqlalchemy.url": get_sync_url()
-        },
+        {"sqlalchemy.url": get_sync_url()},
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
