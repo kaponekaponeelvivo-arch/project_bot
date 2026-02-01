@@ -17,7 +17,7 @@ class NotificationLimit(Base):
     date: Mapped[date] = mapped_column(
         Date,
         primary_key=True,
-    )
+    )	
 
     sent_count: Mapped[int] = mapped_column(
         Integer,

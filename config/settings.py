@@ -10,13 +10,19 @@ class Settings(BaseSettings):
     admin_telegram_id: int = Field(..., env="ADMIN_TELEGRAM_ID")
 
     # =========================
-    # USER BOT
+    # USER BOT (HUB)
     # =========================
     user_bot_token: str = Field(..., env="USER_BOT_TOKEN")
     user_bot_username: str = Field(..., env="USER_BOT_USERNAME")
 
     # =========================
-    # DATABASE (components)
+    # EMA CROSS BOT (ОТДЕЛЬНЫЙ БОТ)
+    # =========================
+    ema_cross_bot_token: str = Field(..., env="EMA_CROSS_BOT_TOKEN")
+    ema_cross_bot_username: str = Field(..., env="EMA_CROSS_BOT_USERNAME")
+
+    # =========================
+    # DATABASE
     # =========================
     db_host: str = Field(..., env="DB_HOST")
     db_port: int = Field(..., env="DB_PORT")
@@ -31,9 +37,6 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> str:
-        """
-        Async database URL (for app)
-        """
         return (
             f"postgresql+asyncpg://{self.db_user}:"
             f"{self.db_password}@{self.db_host}:"
@@ -42,9 +45,6 @@ class Settings(BaseSettings):
 
     @property
     def database_url_sync(self) -> str:
-        """
-        Sync database URL (for Alembic)
-        """
         return (
             f"postgresql+psycopg2://{self.db_user}:"
             f"{self.db_password}@{self.db_host}:"
@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "allow"  # 🔑 ВАЖНО: разрешаем дополнительные env-переменные
 
 
 settings = Settings()
