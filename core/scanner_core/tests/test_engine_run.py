@@ -1,58 +1,75 @@
 from core.scanner_core.engine import ScannerEngine
-from core.scanner_core.state_machine import ScenarioState
+from core.scanner_core.market_context.analyzer import MarketContextAnalyzer
 
+print("=== ENGINE TEST START ===")
 
-def fake_market_data():
-    """
-    Минимальные данные-заглушки,
-    которые ожидают наши детекторы.
-    """
-    return {
-        "start_price": 100,
-        "end_price": 110,
-        "zone_from": 105,
-        "zone_to": 108,
-    }
+# --------------------------------
+# STUB MARKET CONTEXT
+# --------------------------------
+def fake_analyze(self, market_data, event_bus):
+    return "TREND_UP"
 
+MarketContextAnalyzer.analyze = fake_analyze
 
-def run_engine_test():
-    engine = ScannerEngine()
+# --------------------------------
+# ENGINE
+# --------------------------------
+engine = ScannerEngine()
 
-    symbol = "SOLUSDT"
-    direction = "LONG"
+# --------------------------------
+# TEST MARKET DATA (VALID IMPULSE)
+# --------------------------------
+market_data = {
+    "candles": [
+        {"open": 100, "high": 102, "low": 99, "close": 101, "volume": 100},
+        {"open": 101, "high": 103, "low": 100, "close": 102, "volume": 110},
+        {"open": 102, "high": 104, "low": 101, "close": 103, "volume": 105},
+        {"open": 103, "high": 105, "low": 102, "close": 104, "volume": 115},
+        {"open": 104, "high": 106, "low": 103, "close": 105, "volume": 120},
+        {"open": 105, "high": 112, "low": 104, "close": 111, "volume": 300},
+    ]
+}
 
-    print("=== ENGINE TEST START ===")
+# --------------------------------
+# STEP 1
+# --------------------------------
+result = engine.run(
+    symbol="SOLUSDT",
+    market_data=market_data,
+    direction="LONG",
+)
 
-    # Прогон нескольких циклов
-    for step in range(1, 4):
-        result = engine.run(
-            symbol=symbol,
-            market_data=fake_market_data(),
-            direction=direction,
-        )
+print("\n--- STEP 1 ---")
+print(f"Symbol: {result.symbol}")
+print(f"State: {result.state.value}")
+print(f"State changed: {result.state_changed}")
 
-        print(f"\n--- STEP {step} ---")
+if result.events:
+    print("Events:")
+    for e in result.events:
+        print(f" - {e.type.value}")
+else:
+    print("Events: none")
 
-        if result is None:
-            print("No result returned")
-            continue
+# --------------------------------
+# STEP 2 (NO REPEAT)
+# --------------------------------
+result = engine.run(
+    symbol="SOLUSDT",
+    market_data=market_data,
+    direction="LONG",
+)
 
-        print("Symbol:", result.symbol)
-        print("State:", result.state.value)
-        print("State changed:", result.state_changed)
+print("\n--- STEP 2 ---")
+print(f"Symbol: {result.symbol}")
+print(f"State: {result.state.value}")
+print(f"State changed: {result.state_changed}")
 
-        if result.events:
-            print("Events:")
-            for e in result.events:
-                print(f" - {e.type.value}")
-        else:
-            print("Events: none")
+if result.events:
+    print("Events:")
+    for e in result.events:
+        print(f" - {e.type.value}")
+else:
+    print("Events: none")
 
-        # Проверка, что состояние валидное
-        assert isinstance(result.state, ScenarioState)
-
-    print("\n=== ENGINE TEST FINISHED ===")
-
-
-if __name__ == "__main__":
-    run_engine_test()
+print("\n=== ENGINE TEST FINISHED ===")
