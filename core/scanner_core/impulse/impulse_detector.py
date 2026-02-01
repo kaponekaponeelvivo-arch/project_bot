@@ -1,5 +1,3 @@
-# core/scanner_core/impulse/impulse_detector.py
-
 from typing import Optional
 from datetime import datetime
 
@@ -10,8 +8,9 @@ from .impulse import Impulse
 
 class ImpulseDetector:
     """
-    Detects impulse start and impulse exhaustion.
-    Impulse is detected once and never recalculated.
+    Impulse detector.
+    Safe neutral version.
+    Does NOT generate any events until real logic is implemented.
     """
 
     def __init__(self) -> None:
@@ -25,10 +24,8 @@ class ImpulseDetector:
         event_bus: EventBus,
     ) -> Optional[Impulse]:
         """
-        Analyze market data and publish impulse events.
-
-        market_data — любые подготовленные данные (OHLC, range, etc)
-        direction — "LONG" or "SHORT"
+        Analyze market data and publish impulse-related events.
+        Currently contains NO active detection logic.
         """
 
         # ===============================
@@ -36,6 +33,7 @@ class ImpulseDetector:
         # ===============================
         impulse_detected = False
         impulse_exhausted = False
+        correction_started = False
         # ===============================
 
         # --- DETECT IMPULSE ---
@@ -59,6 +57,15 @@ class ImpulseDetector:
             )
 
             return impulse
+
+        # --- CORRECTION START ---
+        if correction_started and self._active_impulse is not None:
+            event_bus.publish(
+                Event(
+                    type=EventType.CORRECTION_STARTED,
+                    symbol=symbol,
+                )
+            )
 
         # --- EXHAUST IMPULSE ---
         if impulse_exhausted and self._active_impulse is not None:
