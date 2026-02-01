@@ -1,20 +1,20 @@
+from typing import List
+
 from core.scanner_core.events import Event, EventType
 from core.scanner_core.events.event_bus import EventBus
-
-from .zone import Zone
-from .zone_types import ZoneType
-from .zone_manager import ZoneManager
+from core.scanner_core.zones.zone import Zone
+from core.scanner_core.zones.zone_types import ZoneType
+from core.scanner_core.zones.zone_status import ZoneStatus
+from core.scanner_core.zones.zone_manager import ZoneManager
 
 
 class ZoneDetector:
     """
-    Zone detector.
-    TEMPORARY test logic:
-    - creates ONE zone immediately on CORRECTION
-    """
+    MVP Zone detector.
 
-    def __init__(self) -> None:
-        self._zone_created: bool = False
+    Zones are created ONLY on CORRECTION_STARTED.
+    Zones are passive context, not signals.
+    """
 
     def analyze(
         self,
@@ -22,36 +22,86 @@ class ZoneDetector:
         market_data: dict,
         zone_manager: ZoneManager,
         event_bus: EventBus,
-    ) -> None:
-        """
-        market_data — prepared data (stub for now)
-        """
+    ) -> List[Zone]:
 
-        # ===============================
-        # TEMP TEST LOGIC (CONTROLLED)
-        # ===============================
-        zone_should_be_created = not self._zone_created
-        # ===============================
+        created_zones: List[Zone] = []
 
-        if zone_should_be_created:
-            self._zone_created = True
+        candles = market_data.get("candles", [])
+        if not candles:
+            return created_zones
 
-            zone = Zone(
-                zone_type=ZoneType.IMBALANCE,
-                price_from=market_data["zone_from"],
-                price_to=market_data["zone_to"],
+        # =========================================
+        # 1. MAIN ZONE — IMPULSE RANGE (RANGE)
+        # =========================================
+        impulse_high = None
+        impulse_low = None
+
+        for c in candles:
+            high = c.get("high")
+            low = c.get("low")
+
+            if impulse_high is None or high > impulse_high:
+                impulse_high = high
+            if impulse_low is None or low < impulse_low:
+                impulse_low = low
+
+        if impulse_high is not None and impulse_low is not None:
+            range_zone = Zone(
+                zone_type=ZoneType.RANGE,
+                price_from=impulse_low,
+                price_to=impulse_high,
+                status=ZoneStatus.ACTIVE,
             )
-            zone_manager.add(zone)
+
+            zone_manager.add(range_zone)
+            created_zones.append(range_zone)
 
             event_bus.publish(
                 Event(
                     type=EventType.ZONE_CREATED,
                     symbol=symbol,
                     payload={
-                        "zone_id": zone.id,
-                        "zone_type": zone.zone_type.value,
-                        "price_from": zone.price_from,
-                        "price_to": zone.price_to,
+                        "type": range_zone.zone_type.value,
+                        "price_from": range_zone.price_from,
+                        "price_to": range_zone.price_to,
                     },
                 )
             )
+
+        # =========================================
+        # 2. STRUCTURAL ZONE (HL / LH) — MVP
+        # =========================================
+        if len(candles) >= 3:
+            prev = candles[-3]
+            mid = candles[-2]
+
+            # simple structural pause
+            is_pause = (
+                mid["high"] < prev["high"]
+                and mid["low"] > prev["low"]
+            )
+
+            if is_pause:
+                structure_zone = Zone(
+                    zone_type=ZoneType.STRUCTURE,
+                    price_from=mid["low"],
+                    price_to=mid["high"],
+                    status=ZoneStatus.ACTIVE,
+                )
+
+                zone_manager.add(structure_zone)
+                created_zones.append(structure_zone)
+
+                event_bus.publish(
+                    Event(
+                        type=EventType.ZONE_CREATED,
+                        symbol=symbol,
+                        payload={
+                            "type": structure_zone.zone_type.value,
+                            "price_from": structure_zone.price_from,
+                            "price_to": structure_zone.price_to,
+                        },
+                    )
+                )
+
+        return created_zones

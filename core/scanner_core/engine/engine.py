@@ -1,6 +1,7 @@
 from typing import Optional
 
 from core.scanner_core.events import EventBus
+from core.scanner_core.events.event_types import EventType
 from core.scanner_core.state_machine import StateMachine, ScenarioState
 from core.scanner_core.scenario import ScenarioManager
 from core.scanner_core.market_context import MarketContextAnalyzer
@@ -13,7 +14,6 @@ from .engine_result import EngineResult
 class ScannerEngine:
     """
     Core orchestration engine.
-    Runs full analysis cycle for ONE symbol.
     """
 
     def __init__(self) -> None:
@@ -26,7 +26,7 @@ class ScannerEngine:
         self._scenario_manager = ScenarioManager()
         self._zone_managers: dict[str, ZoneManager] = {}
 
-        self._market_context = None  # returned by analyzer
+        self._market_context = None
 
     def run(
         self,
@@ -44,22 +44,19 @@ class ScannerEngine:
         )
 
         # ===============================
-        # 2. SCENARIO GET / CREATE
+        # 2. SCENARIO
         # ===============================
         scenario = self._scenario_manager.get(symbol)
         state_before = scenario.state if scenario else ScenarioState.IDLE
 
         if scenario is None:
-            scenario = self._scenario_manager.create(
-                symbol=symbol,
-                direction=direction,
-            )
+            scenario = self._scenario_manager.create(symbol, direction)
             self._zone_managers[symbol] = ZoneManager()
 
         zone_manager = self._zone_managers[symbol]
 
         # ===============================
-        # 3. IMPULSE DETECTION (REAL)
+        # 3. IMPULSE / CORRECTION
         # ===============================
         impulse = self._impulse_detector.analyze(
             symbol=symbol,
@@ -73,24 +70,22 @@ class ScannerEngine:
             scenario.impulse = impulse
 
         # ===============================
-        # 4. ZONE DETECTION (ONLY IN CORRECTION)
-        # ===============================
-        if scenario.state == ScenarioState.CORRECTION:
-            self._zone_detector.analyze(
-                symbol=symbol,
-                market_data=market_data,
-                zone_manager=zone_manager,
-                event_bus=self._event_bus,
-            )
-
-        # ===============================
-        # 5. APPLY EVENTS (STATE MACHINE)
+        # 4. APPLY EVENTS
         # ===============================
         state_changed = False
         events = self._event_bus.drain()
 
         for event in events:
             scenario.add_event(event)
+
+            # 🔥 ZONES CREATED EXACTLY ON CORRECTION_STARTED
+            if event.type == EventType.CORRECTION_STARTED:
+                self._zone_detector.analyze(
+                    symbol=symbol,
+                    market_data=market_data,
+                    zone_manager=zone_manager,
+                    event_bus=self._event_bus,
+                )
 
             new_state = StateMachine.transition(
                 current_state=scenario.state,
@@ -102,7 +97,7 @@ class ScannerEngine:
                 state_changed = True
 
         # ===============================
-        # 6. CLEANUP FINISHED SCENARIOS
+        # 5. CLEANUP
         # ===============================
         if scenario.state in (
             ScenarioState.CANCELLED,
@@ -112,7 +107,7 @@ class ScannerEngine:
             self._zone_managers.pop(symbol, None)
 
         # ===============================
-        # 7. RESULT
+        # 6. RESULT
         # ===============================
         return EngineResult(
             symbol=symbol,

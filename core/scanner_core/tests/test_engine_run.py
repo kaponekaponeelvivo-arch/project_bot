@@ -73,3 +73,23 @@ else:
     print("Events: none")
 
 print("\n=== ENGINE TEST FINISHED ===")
+# --------------------------------
+# STEP 3 (zones should appear here)
+# --------------------------------
+result = engine.run(
+    symbol="SOLUSDT",
+    market_data=market_data,
+    direction="LONG",
+)
+
+print("\n--- STEP 3 ---")
+print(f"Symbol: {result.symbol}")
+print(f"State: {result.state.value}")
+print(f"State changed: {result.state_changed}")
+
+if result.events:
+    print("Events:")
+    for e in result.events:
+        print(f" - {e.type.value}")
+else:
+    print("Events: none")
