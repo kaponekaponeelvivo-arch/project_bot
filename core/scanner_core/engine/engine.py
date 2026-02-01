@@ -1,8 +1,8 @@
 from typing import Optional
 
-from core.scanner_core.events import EventBus, EventType
+from core.scanner_core.events import EventBus
 from core.scanner_core.state_machine import StateMachine, ScenarioState
-from core.scanner_core.scenario import Scenario, ScenarioManager
+from core.scanner_core.scenario import ScenarioManager
 from core.scanner_core.market_context import MarketContextAnalyzer
 from core.scanner_core.impulse import ImpulseDetector
 from core.scanner_core.zones import ZoneDetector, ZoneManager
@@ -24,8 +24,6 @@ class ScannerEngine:
         self._zone_detector = ZoneDetector()
 
         self._scenario_manager = ScenarioManager()
-
-        # Zone managers per symbol
         self._zone_managers: dict[str, ZoneManager] = {}
 
     def run(
@@ -34,12 +32,9 @@ class ScannerEngine:
         market_data: dict,
         direction: str,
     ) -> Optional[EngineResult]:
-        """
-        Run one analysis cycle for symbol.
-        """
 
         # ===============================
-        # 1. Market Context (global)
+        # 1. Market context
         # ===============================
         self._context_analyzer.analyze(
             market_data=market_data,
@@ -75,16 +70,18 @@ class ScannerEngine:
 
         # ===============================
         # 4. Zone detection
+        #    ONLY IN CORRECTION
         # ===============================
-        self._zone_detector.analyze(
-            symbol=symbol,
-            market_data=market_data,
-            zone_manager=zone_manager,
-            event_bus=self._event_bus,
-        )
+        if scenario.state == ScenarioState.CORRECTION:
+            self._zone_detector.analyze(
+                symbol=symbol,
+                market_data=market_data,
+                zone_manager=zone_manager,
+                event_bus=self._event_bus,
+            )
 
         # ===============================
-        # 5. Apply events to scenario
+        # 5. Apply events
         # ===============================
         state_changed = False
         events = self._event_bus.drain()
@@ -102,7 +99,7 @@ class ScannerEngine:
                 state_changed = True
 
         # ===============================
-        # 6. Final states cleanup
+        # 6. Cleanup
         # ===============================
         if scenario.state in (ScenarioState.CANCELLED, ScenarioState.COMPLETED):
             self._scenario_manager.remove(symbol)
