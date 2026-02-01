@@ -1,95 +1,68 @@
 from core.scanner_core.engine import ScannerEngine
-from core.scanner_core.market_context.analyzer import MarketContextAnalyzer
 
-print("=== ENGINE TEST START ===")
 
-# --------------------------------
-# STUB MARKET CONTEXT
-# --------------------------------
-def fake_analyze(self, market_data, event_bus):
-    return "TREND_UP"
+def print_step(step, result):
+    print(f"\n--- STEP {step} ---")
+    print(f"Symbol: {result.symbol}")
+    print(f"State: {result.state.value}")
+    print(f"State changed: {result.state_changed}")
 
-MarketContextAnalyzer.analyze = fake_analyze
+    if result.events:
+        print("Events:")
+        for event in result.events:
+            print(f" - {event.type.value}")
+    else:
+        print("Events: none")
 
-# --------------------------------
-# ENGINE
-# --------------------------------
-engine = ScannerEngine()
 
-# --------------------------------
-# TEST MARKET DATA (VALID IMPULSE)
-# --------------------------------
-market_data = {
-    "candles": [
-        {"open": 100, "high": 102, "low": 99, "close": 101, "volume": 100},
-        {"open": 101, "high": 103, "low": 100, "close": 102, "volume": 110},
-        {"open": 102, "high": 104, "low": 101, "close": 103, "volume": 105},
-        {"open": 103, "high": 105, "low": 102, "close": 104, "volume": 115},
-        {"open": 104, "high": 106, "low": 103, "close": 105, "volume": 120},
-        {"open": 105, "high": 112, "low": 104, "close": 111, "volume": 300},
-    ]
-}
+if __name__ == "__main__":
+    print("=== ENGINE TEST START ===")
 
-# --------------------------------
-# STEP 1
-# --------------------------------
-result = engine.run(
-    symbol="SOLUSDT",
-    market_data=market_data,
-    direction="LONG",
-)
+    engine = ScannerEngine()
 
-print("\n--- STEP 1 ---")
-print(f"Symbol: {result.symbol}")
-print(f"State: {result.state.value}")
-print(f"State changed: {result.state_changed}")
+    # STEP 1 — impulse
+    market_data_1 = {
+        "price": 100,
+        "structure_confirmed": True,
+        "impulse_strength": 1.5,
+        "volume_ratio": 1.3,
+        "trend": "up",
+    }
 
-if result.events:
-    print("Events:")
-    for e in result.events:
-        print(f" - {e.type.value}")
-else:
-    print("Events: none")
+    result = engine.run(
+        symbol="SOLUSDT",
+        market_data=market_data_1,
+    )
+    print_step(1, result)
 
-# --------------------------------
-# STEP 2 (NO REPEAT)
-# --------------------------------
-result = engine.run(
-    symbol="SOLUSDT",
-    market_data=market_data,
-    direction="LONG",
-)
+    # STEP 2 — correction
+    market_data_2 = {
+        "price": 98,
+        "structure_confirmed": False,
+        "impulse_strength": 0.4,
+        "volume_ratio": 0.8,
+        "trend": "up",
+    }
 
-print("\n--- STEP 2 ---")
-print(f"Symbol: {result.symbol}")
-print(f"State: {result.state.value}")
-print(f"State changed: {result.state_changed}")
+    result = engine.run(
+        symbol="SOLUSDT",
+        market_data=market_data_2,
+    )
+    print_step(2, result)
 
-if result.events:
-    print("Events:")
-    for e in result.events:
-        print(f" - {e.type.value}")
-else:
-    print("Events: none")
+    # STEP 3 — reaction + tracking
+    market_data_3 = {
+        "price": 103,
+        "structure_confirmed": True,
+        "impulse_strength": 1.4,
+        "volume_ratio": 1.2,
+        "trend": "up",
+    }
 
-print("\n=== ENGINE TEST FINISHED ===")
-# --------------------------------
-# STEP 3 (zones should appear here)
-# --------------------------------
-result = engine.run(
-    symbol="SOLUSDT",
-    market_data=market_data,
-    direction="LONG",
-)
+    result = engine.run(
+        symbol="SOLUSDT",
+        market_data=market_data_3,
+    )
+    print_step(3, result)
 
-print("\n--- STEP 3 ---")
-print(f"Symbol: {result.symbol}")
-print(f"State: {result.state.value}")
-print(f"State changed: {result.state_changed}")
-
-if result.events:
-    print("Events:")
-    for e in result.events:
-        print(f" - {e.type.value}")
-else:
-    print("Events: none")
+    print("\n=== ENGINE TEST FINISHED ===")

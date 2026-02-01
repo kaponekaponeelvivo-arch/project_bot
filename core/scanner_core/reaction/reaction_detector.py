@@ -1,101 +1,99 @@
-from typing import Optional
+from typing import Dict
 
-from core.scanner_core.events import Event, EventType
-from core.scanner_core.events.event_bus import EventBus
+from core.scanner_core.events.event import Event
+from core.scanner_core.events.event_types import EventType
 from core.scanner_core.zones.zone import Zone
 from core.scanner_core.zones.zone_status import ZoneStatus
 
 
 class ReactionDetector:
     """
-    REACTION B+ detector:
-    - instant reaction (fast response with strength)
-    - confirmed reaction (pause + structure)
-    """
+    Detects reaction from zone and decides whether scenario is CONFIRMED.
 
-    # глубина входа в зону для instant-реакции (30%)
-    MIN_PENETRATION_RATIO = 0.3
+    IMPORTANT:
+    - Reaction ≠ Impulse
+    - Impulse-like movement from zone is treated as CONFIRMED, not new impulse
+    """
 
     def analyze(
         self,
         symbol: str,
-        market_data: dict,
+        market_data: Dict,
         zone: Zone,
         direction: str,
-        event_bus: EventBus,
-    ) -> Optional[str]:
-        """
-        Returns reaction_type if detected: 'instant' | 'confirmed'
-        """
+        event_bus,
+    ) -> None:
 
+        # ===============================
+        # 0. Preconditions
+        # ===============================
         if zone.status != ZoneStatus.ACTIVE:
-            return None
+            return
 
-        candles = market_data.get("candles", [])
-        if len(candles) < 2:
-            return None
-
-        last = candles[-1]
-        prev = candles[-2]
-
-        price = last.get("close")
-        if price is None:
-            return None
-
-        # -----------------------------------------
-        # Check price inside zone
-        # -----------------------------------------
-        if not (zone.price_from <= price <= zone.price_to):
-            return None
-
-        zone_width = zone.price_to - zone.price_from
-        if zone_width <= 0:
-            return None
-
-        penetration = abs(price - zone.price_from) / zone_width
-
-        # =========================================
-        # TYPE 1 — INSTANT REACTION
-        # =========================================
-        strong_body = abs(last["close"] - last["open"]) > abs(prev["close"] - prev["open"])
-        correct_direction = (
-            (direction == "LONG" and last["close"] > last["open"]) or
-            (direction == "SHORT" and last["close"] < last["open"])
+        # Price may have different keys depending on data source
+        price = (
+            market_data.get("price")
+            or market_data.get("close")
+            or market_data.get("last_price")
         )
 
-        if penetration >= self.MIN_PENETRATION_RATIO and strong_body and correct_direction:
-            zone.set_status(ZoneStatus.REACTED)
+        if price is None:
+            return
 
-            event_bus.publish(
-                Event(
-                    type=EventType.REACTION_DETECTED,
-                    symbol=symbol,
-                    payload={
-                        "reaction_type": "instant",
-                        "zone_type": zone.zone_type.value,
-                    },
-                )
+        # price must interact with zone
+        if not (zone.price_from <= price <= zone.price_to):
+            return
+
+        # ===============================
+        # 1. ZONE TOUCHED
+        # ===============================
+        event_bus.publish(
+            Event(
+                type=EventType.ZONE_TOUCHED,
+                symbol=symbol,
+                payload={
+                    "zone_id": zone.id,
+                    "zone_type": zone.zone_type.value,
+                },
             )
-            return "instant"
+        )
 
-        # =========================================
-        # TYPE 2 — CONFIRMED REACTION
-        # =========================================
-        small_range = abs(last["high"] - last["low"]) < abs(prev["high"] - prev["low"])
+        # ===============================
+        # 2. CONFIRMED CONDITIONS
+        # ===============================
 
-        if small_range and correct_direction:
-            zone.set_status(ZoneStatus.REACTED)
+        # --- A. STRUCTURE (MANDATORY) ---
+        structure_confirmed = market_data.get("structure_confirmed", False)
+        if not structure_confirmed:
+            return
 
-            event_bus.publish(
-                Event(
-                    type=EventType.REACTION_DETECTED,
-                    symbol=symbol,
-                    payload={
-                        "reaction_type": "confirmed",
-                        "zone_type": zone.zone_type.value,
-                    },
-                )
+        # --- B. IMPULSE-LIKE REACTION ---
+        impulse_strength = market_data.get("impulse_strength", 0.0)
+        impulse_confirmed = impulse_strength >= 1.0
+
+        # --- C. VOLUME (OPTIONAL) ---
+        volume_ratio = market_data.get("volume_ratio", 1.0)
+        volume_confirmed = volume_ratio >= 1.2
+
+        # Require: A + (B or C)
+        if not (impulse_confirmed or volume_confirmed):
+            return
+
+        # ===============================
+        # 3. CONFIRMED
+        # ===============================
+        zone.set_status(ZoneStatus.REACTED)
+
+        event_bus.publish(
+            Event(
+                type=EventType.SCENARIO_CONFIRMED,
+                symbol=symbol,
+                payload={
+                    "zone_id": zone.id,
+                    "direction": direction,
+                    "structure": True,
+                    "impulse": impulse_confirmed,
+                    "volume": volume_confirmed,
+                },
             )
-            return "confirmed"
-
-        return None
+        )
