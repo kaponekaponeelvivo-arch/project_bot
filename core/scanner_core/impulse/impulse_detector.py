@@ -8,16 +8,18 @@ from .impulse import Impulse
 
 class ImpulseDetector:
     """
-    Real impulse detector (MVP).
+    Impulse + Correction detector (MVP).
 
-    Rules:
-    - Impulse ONLY by trend
-    - Directional range expansion
-    - Relative volume expansion
+    Responsibilities:
+    - Detect impulse by trend, range, volume
+    - Track active impulse
+    - Detect loss of impulse structure -> CORRECTION_STARTED
     """
 
     def __init__(self) -> None:
         self._active_impulse: Optional[Impulse] = None
+        self._impulse_high: Optional[float] = None
+        self._impulse_low: Optional[float] = None
 
     def analyze(
         self,
@@ -27,22 +29,6 @@ class ImpulseDetector:
         market_context,
         event_bus: EventBus,
     ) -> Optional[Impulse]:
-        """
-        market_context — value returned by MarketContextAnalyzer
-        market_data expected format:
-        {
-            "candles": [
-                {"open": float, "high": float, "low": float, "close": float, "volume": float},
-                ...
-            ]
-        }
-        """
-
-        # ===============================
-        # 1. PRECONDITION: TREND ONLY
-        # ===============================
-        if market_context not in ("TREND_UP", "TREND_DOWN"):
-            return self._active_impulse
 
         candles: List[dict] = market_data.get("candles", [])
         if len(candles) < 6:
@@ -51,70 +37,113 @@ class ImpulseDetector:
         recent = candles[-1]
         window = candles[-6:-1]
 
-        # ===============================
-        # 2. RANGE EXPANSION
-        # ===============================
-        recent_range = recent["high"] - recent["low"]
-        avg_range = sum(c["high"] - c["low"] for c in window) / len(window)
+        # ==================================================
+        # 1. DETECT IMPULSE (ONLY IF NONE ACTIVE)
+        # ==================================================
+        if self._active_impulse is None:
 
-        range_expansion = recent_range > avg_range
+            if market_context not in ("TREND_UP", "TREND_DOWN"):
+                return None
 
-        # ===============================
-        # 3. DIRECTION CHECK
-        # ===============================
-        bullish = recent["close"] > recent["open"]
-        bearish = recent["close"] < recent["open"]
+            recent_range = recent["high"] - recent["low"]
+            avg_range = sum(c["high"] - c["low"] for c in window) / len(window)
 
-        direction_ok = (
-            market_context == "TREND_UP" and bullish
-        ) or (
-            market_context == "TREND_DOWN" and bearish
-        )
+            range_expansion = recent_range > avg_range
 
-        # ===============================
-        # 4. RELATIVE VOLUME CONFIRMATION
-        # ===============================
-        recent_volume = recent["volume"]
-        avg_volume = sum(c["volume"] for c in window) / len(window)
+            bullish = recent["close"] > recent["open"]
+            bearish = recent["close"] < recent["open"]
 
-        volume_ok = recent_volume > avg_volume
+            direction_ok = (
+                market_context == "TREND_UP" and bullish
+            ) or (
+                market_context == "TREND_DOWN" and bearish
+            )
 
-        # ===============================
-        # 5. FINAL IMPULSE CONDITION
-        # ===============================
-        impulse_detected = (
-            range_expansion
-            and direction_ok
-            and volume_ok
-            and self._active_impulse is None
-        )
+            recent_volume = recent["volume"]
+            avg_volume = sum(c["volume"] for c in window) / len(window)
 
-        if not impulse_detected:
+            volume_ok = recent_volume > avg_volume
+
+            impulse_detected = range_expansion and direction_ok and volume_ok
+
+            if not impulse_detected:
+                return None
+
+            impulse = Impulse(
+                direction=direction,
+                start_price=window[0]["open"],
+                end_price=recent["close"],
+                started_at=datetime.utcnow(),
+                finished_at=datetime.utcnow(),
+            )
+
+            self._active_impulse = impulse
+            self._impulse_high = recent["high"]
+            self._impulse_low = recent["low"]
+
+            event_bus.publish(
+                Event(
+                    type=EventType.IMPULSE_DETECTED,
+                    symbol=symbol,
+                )
+            )
+
+            return impulse
+
+        # ==================================================
+        # 2. TRACK IMPULSE STRUCTURE
+        # ==================================================
+        self._impulse_high = max(self._impulse_high, recent["high"])
+        self._impulse_low = min(self._impulse_low, recent["low"])
+
+        # ==================================================
+        # 3. DETECT LOSS OF IMPULSE STRUCTURE (CORRECTION)
+        # ==================================================
+        correction_started = False
+
+        # A) no continuation
+        if (
+            market_context == "TREND_UP"
+            and recent["close"] < self._impulse_high
+        ):
+            correction_started = True
+
+        if (
+            market_context == "TREND_DOWN"
+            and recent["close"] > self._impulse_low
+        ):
+            correction_started = True
+
+        # B) deep opposite close (inside impulse body)
+        impulse_body_mid = (
+            self._impulse_high + self._impulse_low
+        ) / 2
+
+        if market_context == "TREND_UP" and recent["close"] < impulse_body_mid:
+            correction_started = True
+
+        if market_context == "TREND_DOWN" and recent["close"] > impulse_body_mid:
+            correction_started = True
+
+        if not correction_started:
             return self._active_impulse
 
-        # ===============================
-        # 6. CREATE IMPULSE + EVENT
-        # ===============================
-        impulse = Impulse(
-            direction=direction,
-            start_price=window[0]["open"],
-            end_price=recent["close"],
-            started_at=datetime.utcnow(),
-            finished_at=datetime.utcnow(),
-        )
-
-        self._active_impulse = impulse
-
+        # ==================================================
+        # 4. START CORRECTION
+        # ==================================================
         event_bus.publish(
             Event(
-                type=EventType.IMPULSE_DETECTED,
+                type=EventType.CORRECTION_STARTED,
                 symbol=symbol,
                 payload={
-                    "direction": direction,
-                    "range_expansion": True,
-                    "volume_confirmed": True,
+                    "impulse_high": self._impulse_high,
+                    "impulse_low": self._impulse_low,
                 },
             )
         )
 
-        return impulse
+        self._active_impulse = None
+        self._impulse_high = None
+        self._impulse_low = None
+
+        return None
