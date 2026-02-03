@@ -1,79 +1,83 @@
-from typing import Dict
+from typing import Dict, Optional
 
-from core.scanner_core.events.event import Event
-from core.scanner_core.events.event_types import EventType
-
-
-PROGRESS_STEP_PERCENT = 3.0
+from core.scanner_core.events import Event, EventType
+from core.scanner_core.events.event_bus import EventBus
+from core.scanner_core.state_machine import ScenarioState
 
 
 class TrackingService:
     """
-    Handles post-CONFIRMED tracking:
-    - progress notifications every +3%
-    - no influence on state machine
-    - no TP logic (TP is market-driven)
+    Tracks scenario progress AFTER CONFIRMED.
+    Emits progress events every N%.
     """
 
-    def __init__(self) -> None:
-        self._last_reported_step: Dict[str, float] = {}
+    def __init__(self, step_percent: float = 3.0) -> None:
+        self._step = step_percent
+        self._start_price: Dict[str, float] = {}
+        self._last_notified_step: Dict[str, int] = {}
 
-    def track(
+    def start(
         self,
         symbol: str,
-        market_data: Dict,
         confirmed_price: float,
-        direction: str,
-        event_bus,
     ) -> None:
+        """
+        Initialize tracking from CONFIRMED price.
+        """
+        self._start_price[symbol] = confirmed_price
+        self._last_notified_step[symbol] = 0
 
-        # -------------------------------
-        # Resolve price safely
-        # -------------------------------
-        price = (
-            market_data.get("price")
-            or market_data.get("close")
-            or market_data.get("last_price")
-        )
+    def stop(self, symbol: str) -> None:
+        """
+        Stop tracking scenario.
+        """
+        self._start_price.pop(symbol, None)
+        self._last_notified_step.pop(symbol, None)
 
-        if price is None:
+    def analyze(
+        self,
+        symbol: str,
+        scenario_state: ScenarioState,
+        market_data: dict,
+        event_bus: EventBus,
+    ) -> None:
+        """
+        Track price progress and emit events.
+        """
+
+        if scenario_state != ScenarioState.CONFIRMED:
             return
 
-        # -------------------------------
-        # Calculate movement %
-        # -------------------------------
-        if direction == "long":
-            movement_pct = ((price - confirmed_price) / confirmed_price) * 100
-        else:
-            movement_pct = ((confirmed_price - price) / confirmed_price) * 100
-
-        if movement_pct < PROGRESS_STEP_PERCENT:
+        if symbol not in self._start_price:
             return
 
-        # -------------------------------
-        # Determine current step
-        # -------------------------------
-        current_step = (
-            int(movement_pct // PROGRESS_STEP_PERCENT) * PROGRESS_STEP_PERCENT
-        )
-
-        last_step = self._last_reported_step.get(symbol, 0.0)
-
-        if current_step <= last_step:
+        candles = market_data.get("candles", [])
+        if not candles:
             return
 
-        # -------------------------------
-        # Publish progress update
-        # -------------------------------
-        self._last_reported_step[symbol] = current_step
+        price = candles[-1]["close"]
+        start_price = self._start_price[symbol]
 
-        event_bus.publish(
-            Event(
-                type=EventType.PROGRESS_UPDATE,
-                symbol=symbol,
-                payload={
-                    "progress_percent": current_step,
-                    "direction": direction,
-                },
+        if start_price <= 0:
+            return
+
+        percent_move = ((price - start_price) / start_price) * 100
+        step_index = int(percent_move // self._step)
+
+        last_step = self._last_notified_step.get(symbol, 0)
+
+        if step_index > last_step:
+            self._last_notified_step[symbol] = step_index
+
+            event_bus.publish(
+                Event(
+                    type=EventType.TRACKING_PROGRESS,
+                    symbol=symbol,
+                    payload={
+                        "from_price": start_price,
+                        "current_price": price,
+                        "percent": round(percent_move, 2),
+                        "step": step_index,
+                    },
+                )
             )
-        )

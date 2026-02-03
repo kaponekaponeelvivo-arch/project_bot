@@ -1,38 +1,38 @@
-from typing import List
+from collections import defaultdict
+from typing import Dict, List
 
-from core.scanner_core.zones.zone import Zone
-from core.scanner_core.zones.zone_status import ZoneStatus
+from .zone import Zone
+from .zone_status import ZoneStatus
 
 
 class ZoneManager:
     """
-    Stores and manages zones for a single symbol.
+    Stores and manages zones per symbol.
     """
 
     def __init__(self) -> None:
-        self._zones: List[Zone] = []
+        self._zones: Dict[str, List[Zone]] = defaultdict(list)
 
-    def add(self, zone: Zone) -> None:
-        self._zones.append(zone)
+    def add(self, symbol: str, zone: Zone) -> None:
+        self._zones[symbol].append(zone)
 
-    def get_all(self) -> List[Zone]:
-        return list(self._zones)
-
-    def get_active_zones(self) -> List[Zone]:
+    def get_active_zones(self, symbol: str) -> List[Zone]:
         """
-        Zones that are still valid and can produce reaction.
+        Return active zones for given symbol.
         """
         return [
-            zone for zone in self._zones
-            if zone.status == ZoneStatus.ACTIVE
+            z for z in self._zones.get(symbol, [])
+            if z.status == ZoneStatus.ACTIVE
         ]
 
-    def get_reacted_zones(self) -> List[Zone]:
-        return [
-            zone for zone in self._zones
-            if zone.status == ZoneStatus.REACTED
-        ]
+    def invalidate_zone(self, symbol: str, zone: Zone) -> None:
+        """
+        Mark zone as invalidated.
+        """
+        zone.set_status(ZoneStatus.INVALIDATED)
 
-    def invalidate_all(self) -> None:
-        for zone in self._zones:
-            zone.set_status(ZoneStatus.INVALIDATED)
+    def react_zone(self, symbol: str, zone: Zone) -> None:
+        """
+        Mark zone as reacted.
+        """
+        zone.set_status(ZoneStatus.REACTED)

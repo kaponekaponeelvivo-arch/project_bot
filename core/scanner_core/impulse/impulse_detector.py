@@ -3,13 +3,12 @@ from datetime import datetime
 
 from core.scanner_core.events import Event, EventType
 from core.scanner_core.events.event_bus import EventBus
-from core.scanner_core.market_context.context import MarketPhase
 from .impulse import Impulse
 
 
 class ImpulseDetector:
     """
-    Impulse + Correction detector (MVP).
+    Detects impulse and correction.
     """
 
     def __init__(self) -> None:
@@ -33,15 +32,12 @@ class ImpulseDetector:
         recent = candles[-1]
         window = candles[-6:-1]
 
-        # ===============================
-        # 1. DETECT IMPULSE
-        # ===============================
+        # ==================================================
+        # 1. DETECT IMPULSE (ONLY IF NONE ACTIVE)
+        # ==================================================
         if self._active_impulse is None:
 
-            if market_context.phase not in (
-                MarketPhase.TREND_UP,
-                MarketPhase.TREND_DOWN,
-            ):
+            if market_context.phase.name not in ("TREND_UP", "TREND_DOWN"):
                 return None
 
             recent_range = recent["high"] - recent["low"]
@@ -53,9 +49,9 @@ class ImpulseDetector:
             bearish = recent["close"] < recent["open"]
 
             direction_ok = (
-                market_context.phase == MarketPhase.TREND_UP and bullish
+                market_context.phase.name == "TREND_UP" and bullish
             ) or (
-                market_context.phase == MarketPhase.TREND_DOWN and bearish
+                market_context.phase.name == "TREND_DOWN" and bearish
             )
 
             recent_volume = recent["volume"]
@@ -63,9 +59,7 @@ class ImpulseDetector:
 
             volume_ok = recent_volume > avg_volume
 
-            impulse_detected = range_expansion and direction_ok and volume_ok
-
-            if not impulse_detected:
+            if not (range_expansion and direction_ok and volume_ok):
                 return None
 
             impulse = Impulse(
@@ -89,26 +83,24 @@ class ImpulseDetector:
 
             return impulse
 
-        # ===============================
+        # ==================================================
         # 2. TRACK IMPULSE STRUCTURE
-        # ===============================
+        # ==================================================
         self._impulse_high = max(self._impulse_high, recent["high"])
         self._impulse_low = min(self._impulse_low, recent["low"])
 
-        # ===============================
+        # ==================================================
         # 3. DETECT CORRECTION
-        # ===============================
+        # ==================================================
         correction_started = False
 
-        impulse_mid = (self._impulse_high + self._impulse_low) / 2
+        mid = (self._impulse_high + self._impulse_low) / 2
 
-        if market_context.phase == MarketPhase.TREND_UP:
-            if recent["close"] < impulse_mid:
-                correction_started = True
+        if market_context.phase.name == "TREND_UP" and recent["close"] < mid:
+            correction_started = True
 
-        if market_context.phase == MarketPhase.TREND_DOWN:
-            if recent["close"] > impulse_mid:
-                correction_started = True
+        if market_context.phase.name == "TREND_DOWN" and recent["close"] > mid:
+            correction_started = True
 
         if not correction_started:
             return self._active_impulse
