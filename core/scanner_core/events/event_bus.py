@@ -10,30 +10,27 @@ class EventBus:
     Handles priority ordering and deduplication.
     """
 
+    # Higher index = higher priority
     _PRIORITY_ORDER = [
-        # Critical invalidations
+        # Context / structure (highest priority)
         EventType.CONTEXT_INVALIDATED,
-        EventType.ZONE_INVALIDATED,
+        EventType.MARKET_CONTEXT_CHANGED,
+        EventType.STRUCTURE_BROKEN,
 
         # Scenario lifecycle
         EventType.SCENARIO_CANCELLED,
         EventType.SCENARIO_COMPLETED,
         EventType.SCENARIO_CONFIRMED,
+        EventType.SCENARIO_STARTED,
 
-        # Progress & reaction
-        EventType.TRACKING_PROGRESS,
-        EventType.REACTION_DETECTED,
+        # Zones & reaction
+        EventType.ZONE_INVALIDATED,
         EventType.ZONE_REACTED,
-        EventType.ZONE_TOUCHED,
 
-        # Structural
+        # Impulse / correction
         EventType.CORRECTION_STARTED,
         EventType.IMPULSE_EXHAUSTED,
         EventType.IMPULSE_DETECTED,
-
-        # Informational
-        EventType.ZONE_CREATED,
-        EventType.MARKET_CONTEXT_CHANGED,
     ]
 
     def __init__(self) -> None:
@@ -41,6 +38,9 @@ class EventBus:
         self._dedup: set[Tuple[str, EventType]] = set()
 
     def publish(self, event: Event) -> None:
+        """
+        Add event to bus with deduplication by (symbol, event_type).
+        """
         key = (event.symbol, event.type)
         if key in self._dedup:
             return
@@ -48,7 +48,13 @@ class EventBus:
         self._dedup.add(key)
         self._events.append(event)
 
+    def has_events(self) -> bool:
+        return bool(self._events)
+
     def drain(self) -> List[Event]:
+        """
+        Return events sorted by priority and clear bus.
+        """
         ordered = sorted(
             self._events,
             key=lambda e: self._priority_index(e.type),

@@ -1,18 +1,18 @@
-# core/scanner_core/scenario/scenario.py
 from dataclasses import dataclass, field
 from typing import List, Optional
 from datetime import datetime
 
-from core.scanner_core.state_machine import ScenarioState
-from core.scanner_core.events import Event
+from core.scanner_core.state_machine import ScenarioState, StateMachine
+from core.scanner_core.events import Event, EventType
 
 
 @dataclass
 class Scenario:
     """
     Scenario is a state container.
-    It does not analyze market or decide transitions.
+    Applies FSM transitions based on incoming events.
     """
+
     symbol: str
     direction: str                  # "LONG" or "SHORT"
     state: ScenarioState = ScenarioState.IDLE
@@ -22,21 +22,22 @@ class Scenario:
 
     events: List[Event] = field(default_factory=list)
 
-    # Placeholders for future layers
     impulse: Optional[object] = None
     zones: List[object] = field(default_factory=list)
 
     def add_event(self, event: Event) -> None:
-        """
-        Store event in scenario history.
-        """
         self.events.append(event)
         self.updated_at = datetime.utcnow()
 
-    def set_state(self, new_state: ScenarioState) -> None:
+    def apply_event(self, event_type: EventType) -> bool:
         """
-        Update scenario state.
+        Apply FSM transition by event type.
+        Returns True if state was changed.
         """
-        if self.state != new_state:
-            self.state = new_state
+        next_state = StateMachine.transition(self.state, event_type)
+        if next_state and next_state != self.state:
+            self.state = next_state
             self.updated_at = datetime.utcnow()
+            return True
+
+        return False

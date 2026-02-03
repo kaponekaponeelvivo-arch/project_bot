@@ -6,45 +6,50 @@ from core.scanner_core.events.event_types import EventType
 
 TRANSITIONS: Dict[ScenarioState, Dict[EventType, ScenarioState]] = {
 
-    # ===============================
-    # START
-    # ===============================
+    # ==================================
+    # IDLE → TREND
+    # ==================================
     ScenarioState.IDLE: {
-        EventType.IMPULSE_DETECTED: ScenarioState.IMPULSE,
+        EventType.MARKET_CONTEXT_CHANGED: ScenarioState.TREND_ACTIVE,
     },
 
-    # ===============================
-    # IMPULSE
-    # ===============================
+    # ==================================
+    # TREND → IMPULSE (KEY TRANSITION)
+    # ==================================
+    ScenarioState.TREND_ACTIVE: {
+        EventType.SCENARIO_STARTED: ScenarioState.IMPULSE,
+        EventType.CONTEXT_INVALIDATED: ScenarioState.CANCELLED,
+    },
+
+    # ==================================
+    # IMPULSE → CORRECTION / CANCELLED
+    # ==================================
     ScenarioState.IMPULSE: {
         EventType.CORRECTION_STARTED: ScenarioState.CORRECTION,
         EventType.IMPULSE_EXHAUSTED: ScenarioState.CANCELLED,
-        EventType.CONTEXT_INVALIDATED: ScenarioState.CANCELLED,
     },
 
-    # ===============================
-    # CORRECTION
-    # ===============================
+    # ==================================
+    # CORRECTION → REACTION / PAUSE
+    # ==================================
     ScenarioState.CORRECTION: {
-        EventType.ZONE_TOUCHED: ScenarioState.REACTION,
-        EventType.CONTEXT_INVALIDATED: ScenarioState.CANCELLED,
+        EventType.ZONE_REACTED: ScenarioState.REACTION,
+        EventType.ZONE_INVALIDATED: ScenarioState.CANCELLED,
     },
 
-    # ===============================
-    # REACTION
-    # ===============================
+    # ==================================
+    # REACTION → CONFIRMED / CANCELLED
+    # ==================================
     ScenarioState.REACTION: {
         EventType.SCENARIO_CONFIRMED: ScenarioState.CONFIRMED,
         EventType.ZONE_INVALIDATED: ScenarioState.CANCELLED,
-        EventType.CONTEXT_INVALIDATED: ScenarioState.CANCELLED,
     },
 
-    # ===============================
-    # CONFIRMED
-    # ===============================
+    # ==================================
+    # CONFIRMED → COMPLETED / CANCELLED
+    # ==================================
     ScenarioState.CONFIRMED: {
         EventType.SCENARIO_COMPLETED: ScenarioState.COMPLETED,
-        EventType.CONTEXT_INVALIDATED: ScenarioState.CANCELLED,
+        EventType.STRUCTURE_BROKEN: ScenarioState.CANCELLED,
     },
-
 }

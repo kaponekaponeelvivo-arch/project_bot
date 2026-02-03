@@ -9,6 +9,14 @@ class EventType(Enum):
     CONTEXT_INVALIDATED = "context_invalidated"
 
     # ===============================
+    # SCENARIO LIFECYCLE
+    # ===============================
+    SCENARIO_STARTED = "scenario_started"
+    SCENARIO_CONFIRMED = "scenario_confirmed"
+    SCENARIO_COMPLETED = "scenario_completed"
+    SCENARIO_CANCELLED = "scenario_cancelled"
+
+    # ===============================
     # IMPULSE
     # ===============================
     IMPULSE_DETECTED = "impulse_detected"
@@ -23,23 +31,10 @@ class EventType(Enum):
     # ZONES
     # ===============================
     ZONE_CREATED = "zone_created"
-    ZONE_TOUCHED = "zone_touched"
     ZONE_REACTED = "zone_reacted"
     ZONE_INVALIDATED = "zone_invalidated"
 
     # ===============================
-    # REACTION / CONFIRMATION
+    # STRUCTURE
     # ===============================
-    REACTION_DETECTED = "reaction_detected"
-    SCENARIO_CONFIRMED = "scenario_confirmed"
-
-    # ===============================
-    # TRACKING
-    # ===============================
-    TRACKING_PROGRESS = "tracking_progress"
-
-    # ===============================
-    # SCENARIO LIFECYCLE
-    # ===============================
-    SCENARIO_COMPLETED = "scenario_completed"
-    SCENARIO_CANCELLED = "scenario_cancelled"
+    STRUCTURE_BROKEN = "structure_broken"

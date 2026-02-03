@@ -1,6 +1,4 @@
-from typing import Dict
-
-from core.scanner_core.events import EventType
+from core.scanner_core.events import Event, EventType
 from core.scanner_core.events.event_bus import EventBus
 
 from core.scanner_core.market_context.analyzer import MarketContextAnalyzer
@@ -9,15 +7,15 @@ from core.scanner_core.zones.zone_detector import ZoneDetector
 from core.scanner_core.zones.zone_manager import ZoneManager
 from core.scanner_core.reaction.reaction_detector import ReactionDetector
 from core.scanner_core.reaction.confirmed_detector import ConfirmedDetector
-from core.scanner_core.tracking.tracking_service import TrackingService
 
 from core.scanner_core.scenario.scenario_manager import ScenarioManager
-from core.scanner_core.state_machine import ScenarioState, StateMachine
+from core.scanner_core.state_machine import StateMachine, ScenarioState
 
 
 class ScannerEngine:
     """
-    Central orchestrator of scanner_core.
+    Core orchestrator.
+    Executes detectors and applies FSM transitions.
     """
 
     def __init__(self) -> None:
@@ -29,17 +27,16 @@ class ScannerEngine:
         self._zone_manager = ZoneManager()
         self._reaction_detector = ReactionDetector()
         self._confirmed_detector = ConfirmedDetector()
-        self._tracking_service = TrackingService()
 
         self._scenario_manager = ScenarioManager()
 
-    def run(self, symbol: str, market_data: dict) -> Dict:
+    def run(self, symbol: str, market_data: dict) -> dict:
         """
-        Single engine cycle.
+        One engine cycle for one symbol.
         """
 
         # ===============================
-        # 1. MARKET CONTEXT
+        # 1️⃣ Market context
         # ===============================
         market_context = self._market_context.analyze(
             market_data=market_data,
@@ -47,42 +44,50 @@ class ScannerEngine:
         )
 
         # ===============================
-        # 2. SCENARIO INIT
+        # 2️⃣ Get or create scenario
         # ===============================
         scenario = self._scenario_manager.get(symbol)
         if scenario is None:
             scenario = self._scenario_manager.create(
                 symbol=symbol,
-                direction="LONG",  # direction is fixed by context later
+                direction="LONG",  # direction is abstract here, not entry signal
             )
 
         # ===============================
-        # 3. IMPULSE
+        # 3️⃣ Impulse detection
         # ===============================
         impulse = self._impulse_detector.analyze(
             symbol=symbol,
             market_data=market_data,
             direction=scenario.direction,
-            market_context=market_context,
+            market_context=market_context.phase.value,
             event_bus=self._event_bus,
         )
 
+        # ⚠️ IMPORTANT:
+        # Impulse itself does NOT start scenario.
+        # Scenario starts ONLY if market context is TREND.
+        if impulse and market_context.phase.value.startswith("TREND"):
+            self._event_bus.publish(
+                Event(
+                    type=EventType.SCENARIO_STARTED,
+                    symbol=symbol,
+                )
+            )
+
         # ===============================
-        # 4. ZONES (ONLY IN CORRECTION)
+        # 4️⃣ Zones (only in CORRECTION)
         # ===============================
         if scenario.state == ScenarioState.CORRECTION:
             self._zone_detector.analyze(
                 symbol=symbol,
                 market_data=market_data,
-                direction=scenario.direction,
+                scenario=scenario,
+                zone_manager=self._zone_manager,
                 event_bus=self._event_bus,
             )
 
-        # ===============================
-        # 5. REACTION
-        # ===============================
-        if scenario.state == ScenarioState.CORRECTION:
-            for zone in self._zone_manager.get_active_zones(symbol):
+            for zone in self._zone_manager.get_active_zones():
                 self._reaction_detector.analyze(
                     symbol=symbol,
                     market_data=market_data,
@@ -92,24 +97,24 @@ class ScannerEngine:
                 )
 
         # ===============================
-        # 6. CONFIRMED
+        # 5️⃣ CONFIRMED
         # ===============================
         if scenario.state == ScenarioState.REACTION:
             self._confirmed_detector.analyze(
                 symbol=symbol,
                 market_data=market_data,
                 direction=scenario.direction,
-                market_context=market_context,
+                market_context=market_context.phase.value,
                 event_bus=self._event_bus,
             )
 
         # ===============================
-        # 7. FSM TRANSITIONS
+        # 6️⃣ Apply FSM transitions
         # ===============================
+        events = self._event_bus.drain()
         state_changed = False
-        for event in self._event_bus.drain():
-            scenario.add_event(event)
 
+        for event in events:
             next_state = StateMachine.transition(
                 current_state=scenario.state,
                 event_type=event.type,
@@ -119,32 +124,11 @@ class ScannerEngine:
                 scenario.set_state(next_state)
                 state_changed = True
 
-                if event.type == EventType.SCENARIO_CONFIRMED:
-                    price = market_data.get("price")
-                    if price:
-                        self._tracking_service.start(price)
-
-                if event.type in (
-                    EventType.SCENARIO_COMPLETED,
-                    EventType.SCENARIO_CANCELLED,
-                ):
-                    self._tracking_service.reset()
-                    self._scenario_manager.remove(symbol)
-
-        # ===============================
-        # 8. TRACKING
-        # ===============================
-        if scenario.state == ScenarioState.CONFIRMED:
-            self._tracking_service.track(
-                symbol=symbol,
-                market_data=market_data,
-                direction=scenario.direction,
-                event_bus=self._event_bus,
-            )
+            scenario.add_event(event)
 
         return {
             "symbol": symbol,
             "state": scenario.state.value,
             "state_changed": state_changed,
-            "events": [e.type.value for e in scenario.events[-5:]],
+            "events": events,
         }
