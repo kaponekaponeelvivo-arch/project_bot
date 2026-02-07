@@ -1,6 +1,5 @@
-# core/scanner_core/market_context/context.py
-from dataclasses import dataclass
 from enum import Enum
+from dataclasses import dataclass
 
 
 class MarketPhase(Enum):

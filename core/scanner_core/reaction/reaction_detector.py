@@ -21,14 +21,12 @@ class ReactionDetector:
     ) -> None:
 
         candles: List[dict] = market_data.get("candles", [])
-        if len(candles) < 2:
+        if len(candles) < 1:
             return
 
         last = candles[-1]
 
-        # ===============================
-        # 1️⃣ Price touched zone
-        # ===============================
+        # 1️⃣ Touch zone
         touched = (
             last["low"] <= zone.price_to
             and last["high"] >= zone.price_from
@@ -37,12 +35,17 @@ class ReactionDetector:
         if not touched:
             return
 
-        # ===============================
-        # 2️⃣ Candle characteristics
-        # ===============================
+        event_bus.publish(
+            Event(
+                type=EventType.ZONE_TOUCHED,
+                symbol=symbol,
+                payload={"zone_id": zone.id},
+            )
+        )
+
+        # 2️⃣ Candle reaction
         body = abs(last["close"] - last["open"])
         full = last["high"] - last["low"]
-
         if full == 0:
             return
 
@@ -59,30 +62,11 @@ class ReactionDetector:
 
         impulse_candle = body_ratio >= 0.6
 
-        # ===============================
-        # 3️⃣ Wick-based reaction
-        # ===============================
-        upper_wick = last["high"] - max(last["open"], last["close"])
-        lower_wick = min(last["open"], last["close"]) - last["low"]
-
-        wick_reaction = False
-        if direction == "LONG" and lower_wick > body:
-            wick_reaction = True
-        if direction == "SHORT" and upper_wick > body:
-            wick_reaction = True
-
-        # ===============================
-        # 4️⃣ Final decision
-        # ===============================
-        if direction_ok and (impulse_candle or wick_reaction):
+        if direction_ok and impulse_candle:
             event_bus.publish(
                 Event(
                     type=EventType.ZONE_REACTED,
                     symbol=symbol,
-                    payload={
-                        "zone_id": zone.id,
-                        "zone_type": zone.zone_type.value,
-                    },
+                    payload={"zone_id": zone.id},
                 )
             )
-

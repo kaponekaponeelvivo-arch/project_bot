@@ -12,10 +12,8 @@ class Zone:
     Zone is an AREA, not a price level.
     """
 
-    # --- NON-DEFAULT FIELDS (MUST GO FIRST) ---
     zone_type: ZoneType
 
-    # --- DEFAULT FIELDS ---
     id: str = field(default_factory=lambda: str(uuid4()))
     status: ZoneStatus = ZoneStatus.ACTIVE
 

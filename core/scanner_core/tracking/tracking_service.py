@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Dict
 
 from core.scanner_core.events import Event, EventType
 from core.scanner_core.events.event_bus import EventBus
@@ -7,68 +7,74 @@ from core.scanner_core.state_machine import ScenarioState
 
 class TrackingService:
     """
-    Tracks scenario progress AFTER CONFIRMED.
-    Not a signal. Informational only.
+    Tracks price movement AFTER SCENARIO_CONFIRMED.
+    Emits TRACKING_PROGRESS every N%.
     """
 
-    def __init__(self, step_percent: float = 3.0) -> None:
-        self._base_price: Optional[float] = None
-        self._last_notified_step: int = 0
-        self._step_percent = step_percent
+    STEP_PERCENT = 3.0
 
-    def reset(self) -> None:
-        self._base_price = None
-        self._last_notified_step = 0
+    def __init__(self) -> None:
+        self._confirm_price: Dict[str, float] = {}
+        self._last_step: Dict[str, int] = {}
 
-    def on_confirmed(self, price: float) -> None:
-        """
-        Initialize tracking from CONFIRMED price.
-        """
-        self._base_price = price
-        self._last_notified_step = 0
+    # ===============================
+    # LIFECYCLE
+    # ===============================
+    def start(self, symbol: str, price: float) -> None:
+        self._confirm_price[symbol] = price
+        self._last_step[symbol] = 0
 
+    def stop(self, symbol: str) -> None:
+        self._confirm_price.pop(symbol, None)
+        self._last_step.pop(symbol, None)
+
+    # ===============================
+    # MAIN
+    # ===============================
     def analyze(
         self,
         symbol: str,
         market_data: dict,
-        direction: str,
         scenario_state: ScenarioState,
+        direction: str,
         event_bus: EventBus,
     ) -> None:
 
         if scenario_state != ScenarioState.CONFIRMED:
             return
 
-        if self._base_price is None:
+        if symbol not in self._confirm_price:
             return
 
         candles = market_data.get("candles", [])
         if not candles:
             return
 
-        last_price = candles[-1]["close"]
+        confirm_price = self._confirm_price[symbol]
+        last_close = candles[-1]["close"]
 
         if direction == "LONG":
-            move_percent = (last_price - self._base_price) / self._base_price * 100
+            move_percent = (last_close - confirm_price) / confirm_price * 100
         else:
-            move_percent = (self._base_price - last_price) / self._base_price * 100
+            move_percent = (confirm_price - last_close) / confirm_price * 100
 
         if move_percent <= 0:
             return
 
-        step = int(move_percent // self._step_percent)
+        step = int(move_percent // self.STEP_PERCENT)
 
-        if step <= self._last_notified_step:
+        if step <= self._last_step.get(symbol, 0):
             return
 
-        self._last_notified_step = step
+        self._last_step[symbol] = step
 
         event_bus.publish(
             Event(
-                type=EventType.SCENARIO_PROGRESS,
+                type=EventType.TRACKING_PROGRESS,
                 symbol=symbol,
                 payload={
-                    "progress_percent": round(step * self._step_percent, 2),
+                    "move_percent": round(move_percent, 2),
+                    "step": step,
                 },
             )
         )

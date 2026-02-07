@@ -3,26 +3,37 @@ from datetime import datetime
 
 from core.scanner_core.events import Event, EventType
 from core.scanner_core.events.event_bus import EventBus
+from core.scanner_core.market_context.context import (
+    MarketContext,
+    MarketPhase,
+    ContextValidity,
+)
 from .impulse import Impulse
 
 
 class ImpulseDetector:
     """
-    Detects impulse and correction.
-    Works ONLY with resolved trend direction (string).
+    Detects impulse and loss of impulse structure.
+
+    Impulse is valid ONLY in TREND context.
+    Correction starts on:
+    - loss of continuation
+    - deep close into impulse body
+    - local structure break
     """
 
     def __init__(self) -> None:
         self._active_impulse: Optional[Impulse] = None
         self._impulse_high: Optional[float] = None
         self._impulse_low: Optional[float] = None
+        self._no_continuation_count: int = 0
 
     def analyze(
         self,
         symbol: str,
         market_data: dict,
         direction: str,
-        market_context: str,
+        market_context: MarketContext,
         event_bus: EventBus,
     ) -> Optional[Impulse]:
 
@@ -30,16 +41,23 @@ class ImpulseDetector:
         if len(candles) < 6:
             return self._active_impulse
 
-        # we only work in trend
-        if market_context not in ("TREND_UP", "TREND_DOWN"):
+        # ===============================
+        # CONTEXT GUARD
+        # ===============================
+        if (
+            market_context.validity != ContextValidity.VALID
+            or market_context.phase
+            not in (MarketPhase.TREND_UP, MarketPhase.TREND_DOWN)
+        ):
             return self._active_impulse
 
         recent = candles[-1]
+        prev = candles[-2]
         window = candles[-6:-1]
 
-        # ==================================================
-        # 1️⃣ DETECT IMPULSE (ONLY IF NONE ACTIVE)
-        # ==================================================
+        # ===============================
+        # 1️⃣ DETECT IMPULSE
+        # ===============================
         if self._active_impulse is None:
 
             recent_range = recent["high"] - recent["low"]
@@ -51,17 +69,12 @@ class ImpulseDetector:
             bearish = recent["close"] < recent["open"]
 
             direction_ok = (
-                market_context == "TREND_UP" and bullish
+                market_context.phase == MarketPhase.TREND_UP and bullish
             ) or (
-                market_context == "TREND_DOWN" and bearish
+                market_context.phase == MarketPhase.TREND_DOWN and bearish
             )
 
-            recent_volume = recent["volume"]
-            avg_volume = sum(c["volume"] for c in window) / len(window)
-
-            volume_ok = recent_volume > avg_volume
-
-            if not (range_expansion and direction_ok and volume_ok):
+            if not (direction_ok and range_expansion):
                 return None
 
             impulse = Impulse(
@@ -75,6 +88,7 @@ class ImpulseDetector:
             self._active_impulse = impulse
             self._impulse_high = recent["high"]
             self._impulse_low = recent["low"]
+            self._no_continuation_count = 0
 
             event_bus.publish(
                 Event(
@@ -85,43 +99,63 @@ class ImpulseDetector:
 
             return impulse
 
-        # ==================================================
-        # 2️⃣ TRACK IMPULSE STRUCTURE
-        # ==================================================
+        # ===============================
+        # 2️⃣ TRACK EXTREMES
+        # ===============================
+        new_high = recent["high"] > self._impulse_high
+        new_low = recent["low"] < self._impulse_low
+
         self._impulse_high = max(self._impulse_high, recent["high"])
         self._impulse_low = min(self._impulse_low, recent["low"])
 
-        # ==================================================
-        # 3️⃣ DETECT CORRECTION
-        # ==================================================
-        correction_started = False
+        if not new_high and not new_low:
+            self._no_continuation_count += 1
+        else:
+            self._no_continuation_count = 0
+
+        # ===============================
+        # 3️⃣ LOSS OF IMPULSE
+        # ===============================
+        correction = False
+
+        # A) No continuation (2 candles)
+        if self._no_continuation_count >= 2:
+            correction = True
+
+        # B) Deep close into impulse body
+        body_mid = (self._impulse_high + self._impulse_low) / 2
 
         if (
-            market_context == "TREND_UP"
-            and recent["close"] < self._impulse_high
+            market_context.phase == MarketPhase.TREND_UP
+            and recent["close"] < body_mid
         ):
-            correction_started = True
+            correction = True
 
         if (
-            market_context == "TREND_DOWN"
-            and recent["close"] > self._impulse_low
+            market_context.phase == MarketPhase.TREND_DOWN
+            and recent["close"] > body_mid
         ):
-            correction_started = True
+            correction = True
 
-        impulse_mid = (self._impulse_high + self._impulse_low) / 2
+        # C) Local structure break
+        if (
+            market_context.phase == MarketPhase.TREND_UP
+            and recent["close"] < prev["low"]
+        ):
+            correction = True
 
-        if market_context == "TREND_UP" and recent["close"] < impulse_mid:
-            correction_started = True
+        if (
+            market_context.phase == MarketPhase.TREND_DOWN
+            and recent["close"] > prev["high"]
+        ):
+            correction = True
 
-        if market_context == "TREND_DOWN" and recent["close"] > impulse_mid:
-            correction_started = True
-
-        if not correction_started:
+        if not correction:
             return self._active_impulse
 
-        # ==================================================
+        # ===============================
         # 4️⃣ START CORRECTION
-        # ==================================================
+        # ===============================
         event_bus.publish(
             Event(
                 type=EventType.CORRECTION_STARTED,
@@ -136,5 +170,6 @@ class ImpulseDetector:
         self._active_impulse = None
         self._impulse_high = None
         self._impulse_low = None
+        self._no_continuation_count = 0
 
         return None

@@ -31,6 +31,7 @@ class EventType(Enum):
     # ZONES
     # ===============================
     ZONE_CREATED = "zone_created"
+    ZONE_TOUCHED = "zone_touched"
     ZONE_REACTED = "zone_reacted"
     ZONE_INVALIDATED = "zone_invalidated"
 
@@ -38,3 +39,13 @@ class EventType(Enum):
     # STRUCTURE
     # ===============================
     STRUCTURE_BROKEN = "structure_broken"
+
+    # ===============================
+    # TRACKING
+    # ===============================
+    TRACKING_PROGRESS = "tracking_progress"
+
+    # ===============================
+    # WATCHLIST
+    # ===============================
+    WATCHLIST_UPDATED = "watchlist_updated"

@@ -3,10 +3,13 @@ from enum import Enum
 
 class ZoneType(Enum):
     """
-    Logical reason why zone exists.
-    Priority is NOT defined here.
+    Zone classification.
+
+    Order is NOT priority.
+    Priority is defined by logic, not enum order.
     """
-    IMBALANCE = "imbalance"      # FVG
-    STRUCTURE = "structure"      # HL / LH
-    RANGE = "range"              # Local range
-    PERCENT = "percent"          # Fibo / percent correction
+
+    STRUCTURE = "structure"
+    IMBALANCE = "imbalance"
+    RANGE = "range"
+    FIBO = "fibo"

@@ -19,7 +19,7 @@ class ScenarioManager:
 
     def create(self, symbol: str, direction: str) -> Scenario:
         """
-        Create new scenario from IDLE.
+        Create new scenario in TREND_ACTIVE state.
         """
         scenario = Scenario(
             symbol=symbol,
@@ -31,7 +31,7 @@ class ScenarioManager:
 
     def remove(self, symbol: str) -> None:
         """
-        Remove scenario completely (after completion/cancel).
+        Remove scenario completely (after COMPLETED / CANCELLED).
         """
         self._scenarios.pop(symbol, None)
 

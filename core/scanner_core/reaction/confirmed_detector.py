@@ -6,9 +6,7 @@ from core.scanner_core.events.event_bus import EventBus
 
 class ConfirmedDetector:
     """
-    Detects CONFIRMED state.
-    Confirmation happens AFTER reaction,
-    when price shows valid continuation from zone.
+    Confirms scenario after valid reaction.
     """
 
     def analyze(
@@ -16,6 +14,7 @@ class ConfirmedDetector:
         symbol: str,
         market_data: dict,
         direction: str,
+        market_context: str,
         event_bus: EventBus,
     ) -> None:
 
@@ -37,17 +36,14 @@ class ConfirmedDetector:
             structure_break = last["close"] < prev["low"]
 
         # ===============================
-        # 2️⃣ Impulse candle confirmation
+        # 2️⃣ Impulse candle
         # ===============================
         body = abs(last["close"] - last["open"])
         full = last["high"] - last["low"]
 
-        if full == 0:
-            return
-
-        body_ratio = body / full
-
-        impulse_candle = body_ratio >= 0.6
+        impulse_candle = (
+            full > 0 and body / full >= 0.6
+        )
 
         direction_ok = (
             direction == "LONG" and last["close"] > last["open"]
@@ -56,7 +52,7 @@ class ConfirmedDetector:
         )
 
         # ===============================
-        # 3️⃣ Final CONFIRMED decision
+        # 3️⃣ FINAL DECISION
         # ===============================
         if direction_ok and (structure_break or impulse_candle):
             event_bus.publish(

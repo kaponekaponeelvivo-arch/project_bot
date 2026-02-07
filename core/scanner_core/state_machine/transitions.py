@@ -14,7 +14,7 @@ TRANSITIONS: Dict[ScenarioState, Dict[EventType, ScenarioState]] = {
     },
 
     # ==================================
-    # TREND → IMPULSE (KEY TRANSITION)
+    # TREND → IMPULSE / CANCELLED
     # ==================================
     ScenarioState.TREND_ACTIVE: {
         EventType.SCENARIO_STARTED: ScenarioState.IMPULSE,
@@ -30,7 +30,7 @@ TRANSITIONS: Dict[ScenarioState, Dict[EventType, ScenarioState]] = {
     },
 
     # ==================================
-    # CORRECTION → REACTION / PAUSE
+    # CORRECTION → REACTION / CANCELLED
     # ==================================
     ScenarioState.CORRECTION: {
         EventType.ZONE_REACTED: ScenarioState.REACTION,
@@ -50,6 +50,7 @@ TRANSITIONS: Dict[ScenarioState, Dict[EventType, ScenarioState]] = {
     # ==================================
     ScenarioState.CONFIRMED: {
         EventType.SCENARIO_COMPLETED: ScenarioState.COMPLETED,
+        EventType.SCENARIO_CANCELLED: ScenarioState.CANCELLED,
         EventType.STRUCTURE_BROKEN: ScenarioState.CANCELLED,
     },
 }

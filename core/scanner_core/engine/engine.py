@@ -7,33 +7,49 @@ from core.scanner_core.zones.zone_detector import ZoneDetector
 from core.scanner_core.zones.zone_manager import ZoneManager
 from core.scanner_core.reaction.reaction_detector import ReactionDetector
 from core.scanner_core.reaction.confirmed_detector import ConfirmedDetector
+from core.scanner_core.tracking.tracking_service import TrackingService
 
 from core.scanner_core.scenario.scenario_manager import ScenarioManager
 from core.scanner_core.state_machine import StateMachine, ScenarioState
+
+from core.scanner_core.notifications.router import NotificationRouter
+from core.scanner_core.notifications.console_notifier import ConsoleNotifier
+from core.scanner_core.notifications.telegram_notifier import TelegramNotifier
+
+from core.scanner_core.watchlist.watchlist import Watchlist
 
 
 class ScannerEngine:
     """
     Core orchestrator.
-    Executes detectors and applies FSM transitions.
+    Executes detectors, FSM transitions and updates Watchlist.
     """
 
     def __init__(self) -> None:
         self._event_bus = EventBus()
 
+        # Core analyzers
         self._market_context = MarketContextAnalyzer()
         self._impulse_detector = ImpulseDetector()
         self._zone_detector = ZoneDetector()
         self._zone_manager = ZoneManager()
         self._reaction_detector = ReactionDetector()
         self._confirmed_detector = ConfirmedDetector()
+        self._tracking = TrackingService()
 
+        # Scenario & watchlist
         self._scenario_manager = ScenarioManager()
+        self._watchlist = Watchlist()
+
+        # 🔔 Notifications (DEV + SCANNER BOT)
+        self._notifier = NotificationRouter(
+            notifiers=[
+                ConsoleNotifier(),
+                TelegramNotifier(),
+            ]
+        )
 
     def run(self, symbol: str, market_data: dict) -> dict:
-        """
-        One engine cycle for one symbol.
-        """
 
         # ===============================
         # 1️⃣ Market context
@@ -44,30 +60,29 @@ class ScannerEngine:
         )
 
         # ===============================
-        # 2️⃣ Get or create scenario
+        # 2️⃣ Scenario
         # ===============================
         scenario = self._scenario_manager.get(symbol)
         if scenario is None:
             scenario = self._scenario_manager.create(
                 symbol=symbol,
-                direction="LONG",  # direction is abstract here, not entry signal
+                direction="LONG",
             )
 
+        prev_state = scenario.state
+
         # ===============================
-        # 3️⃣ Impulse detection
+        # 3️⃣ Impulse
         # ===============================
         impulse = self._impulse_detector.analyze(
             symbol=symbol,
             market_data=market_data,
             direction=scenario.direction,
-            market_context=market_context.phase.value,
+            market_context=market_context,
             event_bus=self._event_bus,
         )
 
-        # ⚠️ IMPORTANT:
-        # Impulse itself does NOT start scenario.
-        # Scenario starts ONLY if market context is TREND.
-        if impulse and market_context.phase.value.startswith("TREND"):
+        if impulse and market_context.phase.name.startswith("TREND"):
             self._event_bus.publish(
                 Event(
                     type=EventType.SCENARIO_STARTED,
@@ -76,7 +91,7 @@ class ScannerEngine:
             )
 
         # ===============================
-        # 4️⃣ Zones (only in CORRECTION)
+        # 4️⃣ Zones + Reaction
         # ===============================
         if scenario.state == ScenarioState.CORRECTION:
             self._zone_detector.analyze(
@@ -97,24 +112,27 @@ class ScannerEngine:
                 )
 
         # ===============================
-        # 5️⃣ CONFIRMED
+        # 5️⃣ Confirmed
         # ===============================
         if scenario.state == ScenarioState.REACTION:
             self._confirmed_detector.analyze(
                 symbol=symbol,
                 market_data=market_data,
                 direction=scenario.direction,
-                market_context=market_context.phase.value,
+                market_context=market_context,
                 event_bus=self._event_bus,
             )
 
         # ===============================
-        # 6️⃣ Apply FSM transitions
+        # 6️⃣ FSM + Notifications
         # ===============================
         events = self._event_bus.drain()
         state_changed = False
 
         for event in events:
+            # 🔔 notify (console + telegram)
+            self._notifier.handle(event)
+
             next_state = StateMachine.transition(
                 current_state=scenario.state,
                 event_type=event.type,
@@ -124,7 +142,41 @@ class ScannerEngine:
                 scenario.set_state(next_state)
                 state_changed = True
 
+                # ▶ start tracking
+                if next_state == ScenarioState.CONFIRMED:
+                    price = market_data["candles"][-1]["close"]
+                    self._tracking.start(symbol, price)
+
+                # ⏹ final states cleanup
+                if next_state in (
+                    ScenarioState.COMPLETED,
+                    ScenarioState.CANCELLED,
+                ):
+                    self._tracking.stop(symbol)
+                    self._zone_manager.clear()
+                    self._scenario_manager.remove(symbol)
+                    self._watchlist.remove(symbol)
+
             scenario.add_event(event)
+
+        # ===============================
+        # 7️⃣ Watchlist update + emit
+        # ===============================
+        if scenario.state != prev_state:
+            self._watchlist.update(symbol, scenario.state)
+            self._watchlist.emit(self._event_bus)
+
+        # ===============================
+        # 8️⃣ Tracking
+        # ===============================
+        if scenario.state == ScenarioState.CONFIRMED:
+            self._tracking.analyze(
+                symbol=symbol,
+                market_data=market_data,
+                scenario_state=scenario.state,
+                direction=scenario.direction,
+                event_bus=self._event_bus,
+            )
 
         return {
             "symbol": symbol,

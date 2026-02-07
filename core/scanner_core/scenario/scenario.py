@@ -1,43 +1,38 @@
 from dataclasses import dataclass, field
-from typing import List, Optional
 from datetime import datetime
+from typing import List
 
-from core.scanner_core.state_machine import ScenarioState, StateMachine
-from core.scanner_core.events import Event, EventType
+from core.scanner_core.state_machine.states import ScenarioState
+from core.scanner_core.events import Event
 
 
 @dataclass
 class Scenario:
     """
     Scenario is a state container.
-    Applies FSM transitions based on incoming events.
+    FSM logic lives outside (StateMachine).
     """
 
     symbol: str
-    direction: str                  # "LONG" or "SHORT"
-    state: ScenarioState = ScenarioState.IDLE
+    direction: str
+    state: ScenarioState
 
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
 
     events: List[Event] = field(default_factory=list)
 
-    impulse: Optional[object] = None
-    zones: List[object] = field(default_factory=list)
+    # ===============================
+    # STATE MANAGEMENT
+    # ===============================
+    def set_state(self, new_state: ScenarioState) -> None:
+        if self.state != new_state:
+            self.state = new_state
+            self.updated_at = datetime.utcnow()
 
+    # ===============================
+    # EVENT HISTORY
+    # ===============================
     def add_event(self, event: Event) -> None:
         self.events.append(event)
         self.updated_at = datetime.utcnow()
-
-    def apply_event(self, event_type: EventType) -> bool:
-        """
-        Apply FSM transition by event type.
-        Returns True if state was changed.
-        """
-        next_state = StateMachine.transition(self.state, event_type)
-        if next_state and next_state != self.state:
-            self.state = next_state
-            self.updated_at = datetime.utcnow()
-            return True
-
-        return False

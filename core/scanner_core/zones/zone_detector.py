@@ -1,69 +1,78 @@
+from typing import Optional
+
 from core.scanner_core.events import Event, EventType
 from core.scanner_core.events.event_bus import EventBus
-from .zone import Zone
-from .zone_types import ZoneType
-from .zone_status import ZoneStatus
+from core.scanner_core.zones.zone import Zone
+from core.scanner_core.zones.zone_types import ZoneType
+from core.scanner_core.zones.zone_manager import ZoneManager
+from core.scanner_core.state_machine import ScenarioState
 
 
 class ZoneDetector:
     """
-    Creates zones on CORRECTION.
-    MVP version.
+    Detects zones during CORRECTION phase.
+
+    Zones are derived from impulse extremes
+    provided via CORRECTION_STARTED event payload.
     """
 
     def __init__(self) -> None:
-        self._zones: list[Zone] = []
+        self._last_impulse_high: Optional[float] = None
+        self._last_impulse_low: Optional[float] = None
 
     def analyze(
         self,
         symbol: str,
         market_data: dict,
-        direction: str,
+        scenario,
+        zone_manager: ZoneManager,
         event_bus: EventBus,
     ) -> None:
-        """
-        Create zone based on last impulse correction.
-        """
 
-        candles = market_data.get("candles", [])
-        if len(candles) < 3:
+        # Zones are created ONLY once per correction
+        if scenario.state != ScenarioState.CORRECTION:
             return
 
-        last = candles[-1]
-        prev = candles[-2]
+        # Extract impulse data from scenario events
+        impulse_event = next(
+            (
+                e for e in reversed(scenario.events)
+                if e.type == EventType.CORRECTION_STARTED
+            ),
+            None,
+        )
+
+        if not impulse_event:
+            return
+
+        impulse_high = impulse_event.payload.get("impulse_high")
+        impulse_low = impulse_event.payload.get("impulse_low")
+
+        if impulse_high is None or impulse_low is None:
+            return
+
+        # Prevent duplicate zone creation
+        if self._last_impulse_high == impulse_high and self._last_impulse_low == impulse_low:
+            return
+
+        self._last_impulse_high = impulse_high
+        self._last_impulse_low = impulse_low
 
         # ===============================
-        # MVP ZONE: STRUCTURE / RANGE
+        # CREATE CONSERVATIVE ZONE
         # ===============================
-        if direction == "LONG":
-            price_from = min(prev["low"], last["low"])
-            price_to = max(prev["high"], last["high"])
-        else:
-            price_from = min(prev["high"], last["high"])
-            price_to = max(prev["low"], last["low"])
+        price_from = impulse_low + (impulse_high - impulse_low) * 0.5
+        price_to = impulse_low + (impulse_high - impulse_low) * 0.618
 
         zone = Zone(
+            symbol=symbol,
             zone_type=ZoneType.STRUCTURE,
-            price_from=price_from,
-            price_to=price_to,
+            price_from=round(price_from, 4),
+            price_to=round(price_to, 4),
         )
 
-        self._zones.append(zone)
-
-        event_bus.publish(
-            Event(
-                type=EventType.ZONE_CREATED,
-                symbol=symbol,
-                payload={
-                    "zone_type": zone.zone_type.value,
-                    "from": zone.price_from,
-                    "to": zone.price_to,
-                },
-            )
+        zone_manager.add_zone(
+            zone=zone,
+            event_bus=event_bus,
+            symbol=symbol,
         )
-
-    def get_active_zones(self) -> list[Zone]:
-        return [
-            z for z in self._zones
-            if z.status == ZoneStatus.ACTIVE
-        ]

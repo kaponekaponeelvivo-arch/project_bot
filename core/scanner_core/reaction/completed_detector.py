@@ -7,63 +7,45 @@ from core.scanner_core.state_machine import ScenarioState
 
 class CompletedDetector:
     """
-    Finalizes scenario lifecycle.
-    Decides COMPLETED or CANCELLED.
+    Detects successful scenario completion.
+    Completion is based ONLY on movement from CONFIRMED price.
     """
+
+    MIN_MOVE_PERCENT = 3.0  # configurable threshold
 
     def analyze(
         self,
         symbol: str,
         market_data: dict,
         scenario_state: ScenarioState,
+        confirm_price: float,
+        direction: str,
         event_bus: EventBus,
     ) -> None:
-        """
-        Rules:
-        - COMPLETED: scenario was CONFIRMED and market continues in direction
-        - CANCELLED: structure broken or context invalidated
-        """
 
-        candles: List[dict] = market_data.get("candles", [])
-        if len(candles) < 2:
+        if scenario_state != ScenarioState.CONFIRMED:
             return
 
-        last = candles[-1]
-        prev = candles[-2]
+        candles: List[dict] = market_data.get("candles", [])
+        if not candles:
+            return
 
-        # ===============================
-        # CANCEL CONDITIONS
-        # ===============================
-        if scenario_state in (
-            ScenarioState.CORRECTION,
-            ScenarioState.REACTION,
-        ):
-            # sharp opposite candle = invalidation
-            body = abs(last["close"] - last["open"])
-            full = last["high"] - last["low"]
+        last_close = candles[-1]["close"]
 
-            if full > 0 and body / full > 0.7:
-                event_bus.publish(
-                    Event(
-                        type=EventType.SCENARIO_CANCELLED,
-                        symbol=symbol,
-                    )
-                )
-                return
+        if direction == "LONG":
+            move = (last_close - confirm_price) / confirm_price * 100
+        else:
+            move = (confirm_price - last_close) / confirm_price * 100
 
-        # ===============================
-        # COMPLETE CONDITIONS
-        # ===============================
-        if scenario_state == ScenarioState.CONFIRMED:
-            continuation = (
-                last["close"] > prev["close"]
-                or last["close"] < prev["close"]
+        if move < self.MIN_MOVE_PERCENT:
+            return
+
+        event_bus.publish(
+            Event(
+                type=EventType.SCENARIO_COMPLETED,
+                symbol=symbol,
+                payload={
+                    "move_percent": round(move, 2),
+                },
             )
-
-            if continuation:
-                event_bus.publish(
-                    Event(
-                        type=EventType.SCENARIO_COMPLETED,
-                        symbol=symbol,
-                    )
-                )
+        )

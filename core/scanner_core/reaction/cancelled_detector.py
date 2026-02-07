@@ -2,75 +2,47 @@ from typing import List
 
 from core.scanner_core.events import Event, EventType
 from core.scanner_core.events.event_bus import EventBus
-from core.scanner_core.zones.zone import Zone
+from core.scanner_core.state_machine import ScenarioState
 
 
 class CancelledDetector:
     """
-    Detects scenario invalidation AFTER confirmation.
+    Detects scenario invalidation.
     """
+
+    MAX_ADVERSE_MOVE = 2.0  # % против сценария после CONFIRMED
 
     def analyze(
         self,
         symbol: str,
         market_data: dict,
+        scenario_state: ScenarioState,
+        confirm_price: float,
         direction: str,
-        active_zones: list[Zone],
         event_bus: EventBus,
     ) -> None:
+
+        if scenario_state != ScenarioState.CONFIRMED:
+            return
 
         candles: List[dict] = market_data.get("candles", [])
         if not candles:
             return
 
-        last = candles[-1]
+        last_close = candles[-1]["close"]
 
-        # ===============================
-        # A) Zone invalidation
-        # ===============================
-        for zone in active_zones:
-            if direction == "LONG" and last["close"] < zone.price_from:
-                event_bus.publish(
-                    Event(
-                        type=EventType.SCENARIO_CANCELLED,
-                        symbol=symbol,
-                        payload={"reason": "zone_invalidated"},
-                    )
-                )
-                return
+        if direction == "LONG":
+            adverse = (confirm_price - last_close) / confirm_price * 100
+        else:
+            adverse = (last_close - confirm_price) / confirm_price * 100
 
-            if direction == "SHORT" and last["close"] > zone.price_to:
-                event_bus.publish(
-                    Event(
-                        type=EventType.SCENARIO_CANCELLED,
-                        symbol=symbol,
-                        payload={"reason": "zone_invalidated"},
-                    )
-                )
-                return
-
-        # ===============================
-        # B) Local structure break
-        # ===============================
-        if len(candles) < 2:
-            return
-
-        prev = candles[-2]
-
-        if direction == "LONG" and last["close"] < prev["low"]:
+        if adverse >= self.MAX_ADVERSE_MOVE:
             event_bus.publish(
                 Event(
                     type=EventType.SCENARIO_CANCELLED,
                     symbol=symbol,
-                    payload={"reason": "structure_broken"},
-                )
-            )
-
-        if direction == "SHORT" and last["close"] > prev["high"]:
-            event_bus.publish(
-                Event(
-                    type=EventType.SCENARIO_CANCELLED,
-                    symbol=symbol,
-                    payload={"reason": "structure_broken"},
+                    payload={
+                        "adverse_move": round(adverse, 2),
+                    },
                 )
             )
