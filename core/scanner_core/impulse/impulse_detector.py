@@ -14,12 +14,6 @@ from .impulse import Impulse
 class ImpulseDetector:
     """
     Detects impulse and loss of impulse structure.
-
-    Impulse is valid ONLY in TREND context.
-    Correction starts on:
-    - loss of continuation
-    - deep close into impulse body
-    - local structure break
     """
 
     def __init__(self) -> None:
@@ -27,6 +21,7 @@ class ImpulseDetector:
         self._impulse_high: Optional[float] = None
         self._impulse_low: Optional[float] = None
         self._no_continuation_count: int = 0
+        self._impulse_start_index: Optional[int] = None
 
     def analyze(
         self,
@@ -77,10 +72,17 @@ class ImpulseDetector:
             if not (direction_ok and range_expansion):
                 return None
 
+            start_price = window[0]["open"]
+            end_price = recent["close"]
+
+            move_pct = round(
+                ((end_price - start_price) / start_price) * 100, 2
+            )
+
             impulse = Impulse(
                 direction=direction,
-                start_price=window[0]["open"],
-                end_price=recent["close"],
+                start_price=start_price,
+                end_price=end_price,
                 started_at=datetime.utcnow(),
                 finished_at=datetime.utcnow(),
             )
@@ -89,11 +91,18 @@ class ImpulseDetector:
             self._impulse_high = recent["high"]
             self._impulse_low = recent["low"]
             self._no_continuation_count = 0
+            self._impulse_start_index = len(candles) - 6
 
             event_bus.publish(
                 Event(
                     type=EventType.IMPULSE_DETECTED,
                     symbol=symbol,
+                    payload={
+                        "start_price": round(start_price, 4),
+                        "end_price": round(end_price, 4),
+                        "move_percent": move_pct,
+                        "duration_candles": 6,
+                    },
                 )
             )
 
@@ -118,11 +127,9 @@ class ImpulseDetector:
         # ===============================
         correction = False
 
-        # A) No continuation (2 candles)
         if self._no_continuation_count >= 2:
             correction = True
 
-        # B) Deep close into impulse body
         body_mid = (self._impulse_high + self._impulse_low) / 2
 
         if (
@@ -137,7 +144,6 @@ class ImpulseDetector:
         ):
             correction = True
 
-        # C) Local structure break
         if (
             market_context.phase == MarketPhase.TREND_UP
             and recent["close"] < prev["low"]
@@ -156,13 +162,20 @@ class ImpulseDetector:
         # ===============================
         # 4️⃣ START CORRECTION
         # ===============================
+        impulse_len = (
+            len(candles) - self._impulse_start_index
+            if self._impulse_start_index is not None
+            else None
+        )
+
         event_bus.publish(
             Event(
                 type=EventType.CORRECTION_STARTED,
                 symbol=symbol,
                 payload={
-                    "impulse_high": self._impulse_high,
-                    "impulse_low": self._impulse_low,
+                    "impulse_high": round(self._impulse_high, 4),
+                    "impulse_low": round(self._impulse_low, 4),
+                    "impulse_duration_candles": impulse_len,
                 },
             )
         )
@@ -171,5 +184,6 @@ class ImpulseDetector:
         self._impulse_high = None
         self._impulse_low = None
         self._no_continuation_count = 0
+        self._impulse_start_index = None
 
         return None

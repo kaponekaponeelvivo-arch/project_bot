@@ -6,7 +6,7 @@ from core.scanner_core.events import Event
 from core.scanner_core.notifications.formatter import NotificationFormatter
 
 
-# ⬇️ ВАЖНО: грузим .env
+# ⬇️ грузим .env из корня проекта
 load_dotenv()
 
 
@@ -25,20 +25,21 @@ class TelegramNotifier:
         if not self._chat_id:
             raise RuntimeError("SCANNER_TELEGRAM_CHAT_ID not set in .env")
 
-        self._api_url = f"https://api.telegram.org/bot{self._token}/sendMessage"
+        self._url = f"https://api.telegram.org/bot{self._token}/sendMessage"
 
     def handle(self, event: Event) -> None:
-        message = NotificationFormatter.format(event)
-        if not message:
+        text = NotificationFormatter.format(event)
+        if not text:
             return
 
         payload = {
             "chat_id": self._chat_id,
-            "text": message,
+            "text": text,
             "parse_mode": "HTML",
+            "disable_web_page_preview": True,
         }
 
         try:
-            requests.post(self._api_url, json=payload, timeout=5)
+            requests.post(self._url, json=payload, timeout=5)
         except Exception as e:
-            print(f"[TELEGRAM ERROR] {e}")
+            print(f"[TELEGRAM NOTIFIER ERROR] {e}")
