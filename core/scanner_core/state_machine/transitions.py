@@ -17,7 +17,7 @@ TRANSITIONS: Dict[ScenarioState, Dict[EventType, ScenarioState]] = {
     # TREND → IMPULSE / CANCELLED
     # ==================================
     ScenarioState.TREND_ACTIVE: {
-        EventType.SCENARIO_STARTED: ScenarioState.IMPULSE,
+        EventType.IMPULSE_DETECTED: ScenarioState.IMPULSE,
         EventType.CONTEXT_INVALIDATED: ScenarioState.CANCELLED,
     },
 

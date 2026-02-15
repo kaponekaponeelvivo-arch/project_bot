@@ -93,6 +93,8 @@ class ImpulseDetector:
             self._no_continuation_count = 0
             self._impulse_start_index = len(candles) - 6
 
+            print(f"[DEBUG] IMPULSE_DETECTED {symbol} start={start_price} end={end_price}")
+
             event_bus.publish(
                 Event(
                     type=EventType.IMPULSE_DETECTED,

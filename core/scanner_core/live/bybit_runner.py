@@ -17,7 +17,7 @@ class BybitRunner:
     def __init__(
         self,
         symbols: List[str],
-        interval: str = "5",   # 5m candles
+        interval: str = "1",   # 1m candles (test mode)
         limit: int = 200,      # enough for context + impulse
         loop_delay: int = 60,  # seconds
     ) -> None:
@@ -64,33 +64,32 @@ class BybitRunner:
 # ==================================================
 if __name__ == "__main__":
 
-    # 🔹 Top liquid symbols (Bybit USDT Perpetuals)
+    # 🔹 Expanded liquid symbols (Bybit USDT Perpetuals)
     SYMBOLS = [
-        "BTCUSDT",
-        "ETHUSDT",
-        "SOLUSDT",
-        "BNBUSDT",
-        "XRPUSDT",
-        "ADAUSDT",
-        "AVAXUSDT",
-        "DOGEUSDT",
-        "DOTUSDT",
-        "LINKUSDT",
-        "MATICUSDT",
-        "TONUSDT",
-        "LTCUSDT",
-        "BCHUSDT",
-        "TRXUSDT",
-        "OPUSDT",
-        "ARBUSDT",
-        "APTUSDT",
-        "NEARUSDT",
-        "ATOMUSDT",
+        "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT",
+        "ADAUSDT", "AVAXUSDT", "DOGEUSDT", "DOTUSDT", "LINKUSDT",
+        "MATICUSDT", "TONUSDT", "LTCUSDT", "BCHUSDT", "TRXUSDT",
+        "OPUSDT", "ARBUSDT", "APTUSDT", "NEARUSDT", "ATOMUSDT",
+        "UNIUSDT", "SUIUSDT", "SEIUSDT", "TIAUSDT", "INJUSDT",
+        "FILUSDT", "AAVEUSDT", "FTMUSDT", "ALGOUSDT", "XLMUSDT",
+        "ETCUSDT", "MKRUSDT", "EGLDUSDT", "THETAUSDT", "RUNEUSDT",
+        "GRTUSDT", "IMXUSDT", "PEPEUSDT", "WIFUSDT", "BONKUSDT",
+        "JUPUSDT", "PYTHUSDT", "ENAUSDT", "RNDRUSDT", "LDOUSDT",
+        "EOSUSDT", "STXUSDT", "ICPUSDT", "HBARUSDT", "FLOWUSDT",
+        "VETUSDT", "SANDUSDT", "MANAUSDT", "AXSUSDT", "CHZUSDT",
+        "KASUSDT", "GMTUSDT", "DYDXUSDT", "CRVUSDT", "1INCHUSDT",
+        "COMPUSDT", "SNXUSDT", "YFIUSDT", "KAVAUSDT", "ZILUSDT",
+        "ROSEUSDT", "CELOUSDT", "BLURUSDT", "PENDLEUSDT", "ORDIUSDT",
+        "BOMEUSDT", "NOTUSDT", "WLDUSDT", "TAOUSDT", "ONDOUSDT",
+        "JASMYUSDT", "FETUSDT", "AGIXUSDT", "OCEANUSDT", "ANKRUSDT",
+        "CFXUSDT", "QNTUSDT", "BATUSDT", "ZRXUSDT", "NKNUSDT",
+        "SFPUSDT", "RAYUSDT", "TRBUSDT", "ENSUSDT", "MASKUSDT",
+        "API3USDT", "GMXUSDT", "ARUSDT", "MEMEUSDT", "NEOUSDT",
     ]
 
     runner = BybitRunner(
         symbols=SYMBOLS,
-        interval="5",     # 5m = быстрые сигналы
+        interval="1",     # 1m = ускоренное тестирование
         limit=200,
         loop_delay=60,    # обновление раз в минуту
     )

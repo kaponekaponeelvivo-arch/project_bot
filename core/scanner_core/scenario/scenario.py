@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List
+from typing import Any, Dict, List
 
 from core.scanner_core.state_machine.states import ScenarioState
 from core.scanner_core.events import Event
@@ -21,6 +21,7 @@ class Scenario:
     updated_at: datetime = field(default_factory=datetime.utcnow)
 
     events: List[Event] = field(default_factory=list)
+    last_impulse: Dict[str, Any] | None = None
 
     # ===============================
     # STATE MANAGEMENT

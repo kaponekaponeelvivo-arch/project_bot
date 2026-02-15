@@ -30,7 +30,7 @@ class ScannerEngine:
 
         # Core analyzers
         self._market_context = MarketContextAnalyzer()
-        self._impulse_detector = ImpulseDetector()
+        self._impulse_detectors: dict[str, ImpulseDetector] = {}
         self._zone_detector = ZoneDetector()
         self._zone_manager = ZoneManager()
         self._reaction_detector = ReactionDetector()
@@ -48,6 +48,62 @@ class ScannerEngine:
                 TelegramNotifier(),
             ]
         )
+
+    def _process_event(
+        self,
+        event: Event,
+        scenario,
+        market_data: dict,
+        events,
+        event_index: int,
+        symbol: str,
+        ux_event_types,
+        emit_watchlist: bool,
+    ) -> bool:
+        if event.type == EventType.IMPULSE_DETECTED:
+            scenario.last_impulse = dict(event.payload or {})
+
+        if event.type == EventType.CORRECTION_STARTED and scenario.last_impulse:
+            event.payload["start_price"] = scenario.last_impulse.get("start_price")
+            event.payload["end_price"] = scenario.last_impulse.get("end_price")
+            event.payload["move_percent"] = scenario.last_impulse.get("move_percent")
+            event.payload["duration_candles"] = scenario.last_impulse.get("duration_candles")
+
+        # 🔔 notify (console + telegram)
+        self._notifier.handle(event)
+
+        state_changed = False
+        next_state = StateMachine.transition(
+            current_state=scenario.state,
+            event_type=event.type,
+        )
+
+        if next_state:
+            scenario.set_state(next_state)
+            state_changed = True
+
+            # ▶ start tracking
+            if next_state == ScenarioState.CONFIRMED:
+                price = market_data["candles"][-1]["close"]
+                self._tracking.start(symbol, price)
+
+            # ⏹ final states cleanup
+            if next_state in (
+                ScenarioState.COMPLETED,
+                ScenarioState.CANCELLED,
+            ):
+                self._tracking.stop(symbol)
+                self._zone_manager.clear()
+                self._scenario_manager.remove(symbol)
+                self._watchlist.remove(symbol)
+
+        scenario.add_event(event)
+
+        if emit_watchlist and event.type in ux_event_types:
+            self._watchlist.update(symbol, scenario.state)
+            self._watchlist.emit(self._event_bus)
+
+        return state_changed
 
     def run(self, symbol: str, market_data: dict) -> dict:
 
@@ -69,26 +125,21 @@ class ScannerEngine:
                 direction="LONG",
             )
 
-        prev_state = scenario.state
-
         # ===============================
         # 3️⃣ Impulse
         # ===============================
-        impulse = self._impulse_detector.analyze(
+        impulse_detector = self._impulse_detectors.get(symbol)
+        if impulse_detector is None:
+            impulse_detector = ImpulseDetector()
+            self._impulse_detectors[symbol] = impulse_detector
+
+        impulse_detector.analyze(
             symbol=symbol,
             market_data=market_data,
             direction=scenario.direction,
             market_context=market_context,
             event_bus=self._event_bus,
         )
-
-        if impulse and market_context.phase.name.startswith("TREND"):
-            self._event_bus.publish(
-                Event(
-                    type=EventType.SCENARIO_STARTED,
-                    symbol=symbol,
-                )
-            )
 
         # ===============================
         # 4️⃣ Zones + Reaction
@@ -123,48 +174,53 @@ class ScannerEngine:
                 event_bus=self._event_bus,
             )
 
+        ux_event_types = {
+            EventType.CORRECTION_STARTED,
+            EventType.ZONE_REACTED,
+            EventType.SCENARIO_CONFIRMED,
+            EventType.TRACKING_PROGRESS,
+        }
+
         # ===============================
         # 6️⃣ FSM + Notifications
         # ===============================
         events = self._event_bus.drain()
         state_changed = False
 
-        for event in events:
-            # 🔔 notify (console + telegram)
-            self._notifier.handle(event)
-
-            next_state = StateMachine.transition(
-                current_state=scenario.state,
-                event_type=event.type,
+        for index, event in enumerate(events):
+            state_changed = (
+                self._process_event(
+                    event=event,
+                    scenario=scenario,
+                    market_data=market_data,
+                    events=events,
+                    event_index=index,
+                    symbol=symbol,
+                    ux_event_types=ux_event_types,
+                    emit_watchlist=True,
+                )
+                or state_changed
             )
 
-            if next_state:
-                scenario.set_state(next_state)
-                state_changed = True
-
-                # ▶ start tracking
-                if next_state == ScenarioState.CONFIRMED:
-                    price = market_data["candles"][-1]["close"]
-                    self._tracking.start(symbol, price)
-
-                # ⏹ final states cleanup
-                if next_state in (
-                    ScenarioState.COMPLETED,
-                    ScenarioState.CANCELLED,
-                ):
-                    self._tracking.stop(symbol)
-                    self._zone_manager.clear()
-                    self._scenario_manager.remove(symbol)
-                    self._watchlist.remove(symbol)
-
-            scenario.add_event(event)
-
         # ===============================
-        # 7️⃣ Watchlist update + emit
+        # 7️⃣ Watchlist emitted events
         # ===============================
-        if scenario.state != prev_state:
-            self._watchlist.update(symbol, scenario.state)
-            self._watchlist.emit(self._event_bus)
+        events = self._event_bus.drain()
+
+        for index, event in enumerate(events):
+            state_changed = (
+                self._process_event(
+                    event=event,
+                    scenario=scenario,
+                    market_data=market_data,
+                    events=events,
+                    event_index=index,
+                    symbol=symbol,
+                    ux_event_types=ux_event_types,
+                    emit_watchlist=False,
+                )
+                or state_changed
+            )
 
         # ===============================
         # 8️⃣ Tracking
@@ -176,6 +232,43 @@ class ScannerEngine:
                 scenario_state=scenario.state,
                 direction=scenario.direction,
                 event_bus=self._event_bus,
+            )
+
+        # ===============================
+        # 9️⃣ Tracking events + Watchlist
+        # ===============================
+        events = self._event_bus.drain()
+
+        for index, event in enumerate(events):
+            state_changed = (
+                self._process_event(
+                    event=event,
+                    scenario=scenario,
+                    market_data=market_data,
+                    events=events,
+                    event_index=index,
+                    symbol=symbol,
+                    ux_event_types=ux_event_types,
+                    emit_watchlist=True,
+                )
+                or state_changed
+            )
+
+        events = self._event_bus.drain()
+
+        for index, event in enumerate(events):
+            state_changed = (
+                self._process_event(
+                    event=event,
+                    scenario=scenario,
+                    market_data=market_data,
+                    events=events,
+                    event_index=index,
+                    symbol=symbol,
+                    ux_event_types=ux_event_types,
+                    emit_watchlist=False,
+                )
+                or state_changed
             )
 
         return {
