@@ -38,24 +38,43 @@ def _format_watchlist(event):
 def _format_correction(event: Event) -> str:
     payload = event.payload or {}
 
-    start_price = payload.get("start_price", "—")
-    end_price = payload.get("end_price", "—")
-    move_percent = payload.get("move_percent", "—")
-    duration_candles = payload.get("duration_candles", "—")
-
     return (
         f"{event.symbol}\n\n"
         f"Статус: CORRECTION\n\n"
         f"Импульс:\n"
-        f"Начало: {start_price}\n"
-        f"Окончание: {end_price}\n"
-        f"Движение: {move_percent}%\n"
-        f"Длительность: {duration_candles} свечей\n\n"
+        f"Начало: {payload.get('start_price', '—')}\n"
+        f"Окончание: {payload.get('end_price', '—')}\n"
+        f"Движение: {payload.get('move_percent', '—')}%\n"
+        f"Длительность: {payload.get('duration_candles', '—')} свечей\n\n"
         f"Сценарий активен. Идёт коррекция после импульса."
+    )
+
+
+def _format_reaction(event: Event) -> str:
+    payload = event.payload or {}
+
+    return (
+        f"{event.symbol}\n\n"
+        f"Статус: REACTION\n\n"
+        f"Зона: {payload.get('zone_type', '—')}\n"
+        f"Диапазон: {payload.get('price_from', '—')} – {payload.get('price_to', '—')}\n"
+        f"Глубина коррекции: {payload.get('correction_depth_pct', '—')}%\n\n"
+        f"Цена вошла в потенциальную зону реакции."
+    )
+
+
+def _format_confirmed(event: Event) -> str:
+    return (
+        f"{event.symbol}\n\n"
+        f"Статус: CONFIRMED\n\n"
+        f"Сценарий подтверждён.\n"
+        f"Структура сломана в сторону тренда."
     )
 
 
 TEMPLATES = {
     EventType.WATCHLIST_UPDATED: _format_watchlist,
     EventType.CORRECTION_STARTED: _format_correction,
+    EventType.ZONE_REACTED: _format_reaction,
+    EventType.SCENARIO_CONFIRMED: _format_confirmed,
 }

@@ -1,159 +1,112 @@
-from typing import Optional, List
-
+from typing import Dict, List
 from core.scanner_core.events import Event, EventType
-from core.scanner_core.events.event_bus import EventBus
-from .context import MarketContext, MarketPhase, ContextValidity
+from core.scanner_core.market_context.context import (
+    MarketContext,
+    MarketPhase,
+    ContextValidity,
+)
 
 
 class MarketContextAnalyzer:
     """
-    SMART Market Context Analyzer.
+    4H Swing Structure Trend Model
 
-    Window: last 30 candles
-    Purpose:
-    - determine market phase (TREND_UP / TREND_DOWN / RANGE)
-    - determine context validity (VALID / INVALID)
-    - protect FSM from noise and chaos
+    TREND_UP if:
+        - 2 Higher High
+        - 2 Higher Low
+        - Range between swing low/high >= 12%
+
+    TREND_DOWN if:
+        - 2 Lower Low
+        - 2 Lower High
+        - Range >= 12%
+
+    Otherwise RANGE.
     """
 
-    WINDOW = 30
-    MIN_STRUCTURE_POINTS = 3  # HH/HL or LL/LH confirmations
+    MIN_RANGE_PERCENT = 12  # 🔥 было 17
+    SWING_LOOKBACK = 2
 
     def __init__(self) -> None:
-        self._last_context: Optional[MarketContext] = None
+        self._last_context: MarketContext | None = None
 
-    def analyze(self, market_data: dict, event_bus: EventBus) -> MarketContext:
+    def analyze(self, market_data: Dict, event_bus) -> MarketContext:
+
         candles: List[dict] = market_data.get("candles", [])
 
-        # ===============================
-        # 0️⃣ Safety: insufficient data
-        # ===============================
-        if len(candles) < self.WINDOW:
-            context = MarketContext(
-                phase=MarketPhase.RANGE,
-                validity=ContextValidity.VALID,
-            )
-            self._last_context = context
-            return context
-
-        window = candles[-self.WINDOW:]
-
-        highs = [c["high"] for c in window]
-        lows = [c["low"] for c in window]
-        closes = [c["close"] for c in window]
-
-        max_high = max(highs)
-        min_low = min(lows)
-        range_size = max_high - min_low
-
-        # Hard safety
-        if range_size == 0:
+        if len(candles) < 20:
             context = MarketContext(
                 phase=MarketPhase.RANGE,
                 validity=ContextValidity.INVALID,
             )
-            self._emit_if_changed(context, event_bus)
             self._last_context = context
             return context
 
-        # ===============================
-        # 1️⃣ STRUCTURE ANALYSIS
-        # ===============================
-        higher_highs = 0
-        higher_lows = 0
-        lower_lows = 0
-        lower_highs = 0
-
-        for i in range(1, len(window)):
-            if highs[i] > highs[i - 1]:
-                higher_highs += 1
-            if lows[i] > lows[i - 1]:
-                higher_lows += 1
-            if lows[i] < lows[i - 1]:
-                lower_lows += 1
-            if highs[i] < highs[i - 1]:
-                lower_highs += 1
-
-        # ===============================
-        # 2️⃣ PRICE LOCATION
-        # ===============================
-        last_close = closes[-1]
-        position_in_range = (last_close - min_low) / range_size
-
-        # ===============================
-        # 3️⃣ PHASE DECISION
-        # ===============================
-        phase = MarketPhase.RANGE
-
-        if (
-            higher_highs >= self.MIN_STRUCTURE_POINTS
-            and higher_lows >= self.MIN_STRUCTURE_POINTS
-            and position_in_range > 0.55
-        ):
-            phase = MarketPhase.TREND_UP
-
-        elif (
-            lower_lows >= self.MIN_STRUCTURE_POINTS
-            and lower_highs >= self.MIN_STRUCTURE_POINTS
-            and position_in_range < 0.45
-        ):
-            phase = MarketPhase.TREND_DOWN
-
-        # ===============================
-        # 4️⃣ VALIDITY CHECK
-        # ===============================
-        validity = ContextValidity.VALID
-
-        # Chaos filter: extreme candles
-        extreme_bodies = 0
-        for c in window[-5:]:
-            body = abs(c["close"] - c["open"])
-            full = c["high"] - c["low"]
-            if full > 0 and body / full > 0.85:
-                extreme_bodies += 1
-
-        if extreme_bodies >= 3:
-            validity = ContextValidity.INVALID
-
-        # Trend contradiction protection
-        if phase == MarketPhase.TREND_UP and position_in_range < 0.3:
-            validity = ContextValidity.INVALID
-
-        if phase == MarketPhase.TREND_DOWN and position_in_range > 0.7:
-            validity = ContextValidity.INVALID
+        swing_highs, swing_lows = self._find_swings(candles)
+        phase = self._determine_phase(swing_highs, swing_lows)
 
         context = MarketContext(
             phase=phase,
-            validity=validity,
+            validity=ContextValidity.VALID,
         )
 
-        self._emit_if_changed(context, event_bus)
+        if self._last_context is not None:
+            if context.phase != self._last_context.phase:
+                event_bus.publish(
+                    Event(
+                        type=EventType.MARKET_CONTEXT_CHANGED,
+                        symbol="GLOBAL",
+                        payload={"phase": context.phase.name},
+                    )
+                )
+
         self._last_context = context
         return context
 
-    # ===============================
-    # INTERNAL
-    # ===============================
-    def _emit_if_changed(self, new: MarketContext, event_bus: EventBus) -> None:
-        if self._last_context is None:
-            return
+    def _find_swings(self, candles: List[dict]):
+        highs = []
+        lows = []
 
-        if new.phase != self._last_context.phase:
-            event_bus.publish(
-                Event(
-                    type=EventType.MARKET_CONTEXT_CHANGED,
-                    symbol="MARKET",
-                    payload={
-                        "from": self._last_context.phase.value,
-                        "to": new.phase.value,
-                    },
-                )
-            )
+        for i in range(self.SWING_LOOKBACK, len(candles) - self.SWING_LOOKBACK):
+            current = candles[i]
 
-        if new.validity != self._last_context.validity:
-            event_bus.publish(
-                Event(
-                    type=EventType.CONTEXT_INVALIDATED,
-                    symbol="MARKET",
-                )
-            )
+            left = candles[i - self.SWING_LOOKBACK : i]
+            right = candles[i + 1 : i + 1 + self.SWING_LOOKBACK]
+
+            if all(current["high"] > c["high"] for c in left + right):
+                highs.append((i, current["high"]))
+
+            if all(current["low"] < c["low"] for c in left + right):
+                lows.append((i, current["low"]))
+
+        return highs, lows
+
+    def _determine_phase(self, swing_highs, swing_lows):
+
+        if len(swing_highs) < 2 or len(swing_lows) < 2:
+            return MarketPhase.RANGE
+
+        last_high_1 = swing_highs[-1][1]
+        last_high_2 = swing_highs[-2][1]
+
+        last_low_1 = swing_lows[-1][1]
+        last_low_2 = swing_lows[-2][1]
+
+        is_higher_high = last_high_1 > last_high_2
+        is_higher_low = last_low_1 > last_low_2
+
+        is_lower_high = last_high_1 < last_high_2
+        is_lower_low = last_low_1 < last_low_2
+
+        range_percent = abs(last_high_1 - last_low_1) / last_low_1 * 100
+
+        if range_percent < self.MIN_RANGE_PERCENT:
+            return MarketPhase.RANGE
+
+        if is_higher_high and is_higher_low:
+            return MarketPhase.TREND_UP
+
+        if is_lower_high and is_lower_low:
+            return MarketPhase.TREND_DOWN
+
+        return MarketPhase.RANGE

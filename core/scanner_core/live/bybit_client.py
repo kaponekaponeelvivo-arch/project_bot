@@ -10,22 +10,15 @@ class BybitClient:
 
     BASE_URL = "https://api.bybit.com"
 
+    # ==================================================
+    # CANDLES
+    # ==================================================
     def get_candles(
         self,
         symbol: str,
         interval: str,
         limit: int = 200,
     ) -> Dict[str, List[dict]]:
-        """
-        Fetch kline data from Bybit.
-
-        interval:
-        1  = 1m
-        3  = 3m
-        5  = 5m
-        15 = 15m
-        60 = 1h
-        """
 
         url = f"{self.BASE_URL}/v5/market/kline"
 
@@ -48,7 +41,6 @@ class BybitClient:
 
         raw = data["result"]["list"]
 
-        # Bybit returns newest → oldest, we reverse
         candles = []
         for c in reversed(raw):
             candles.append(
@@ -63,3 +55,46 @@ class BybitClient:
             )
 
         return {"candles": candles}
+
+    # ==================================================
+    # TOP SYMBOLS BY 24H VOLUME
+    # ==================================================
+    def get_top_symbols(self, limit: int = 100) -> List[str]:
+        """
+        Returns top USDT perpetual symbols sorted by 24h turnover.
+        """
+
+        url = f"{self.BASE_URL}/v5/market/tickers"
+
+        params = {
+            "category": "linear",
+        }
+
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+
+        data = response.json()
+
+        if data.get("retCode") != 0:
+            raise RuntimeError(
+                f"Bybit API error {data.get('retCode')}: {data.get('retMsg')}"
+            )
+
+        tickers = data["result"]["list"]
+
+        # Filter only USDT perpetual
+        usdt_pairs = [
+            t for t in tickers
+            if t["symbol"].endswith("USDT")
+        ]
+
+        # Sort by 24h turnover
+        sorted_pairs = sorted(
+            usdt_pairs,
+            key=lambda x: float(x.get("turnover24h", 0)),
+            reverse=True,
+        )
+
+        top_symbols = [t["symbol"] for t in sorted_pairs[:limit]]
+
+        return top_symbols

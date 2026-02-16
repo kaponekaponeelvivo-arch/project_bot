@@ -1,202 +1,126 @@
 import os
-import tempfile
+import io
 import requests
 import matplotlib.pyplot as plt
-from matplotlib.patches import Rectangle
-from dotenv import load_dotenv
 
+from typing import Optional
+from dotenv import load_dotenv
 from core.scanner_core.events import Event
 from core.scanner_core.events.event_types import EventType
 from core.scanner_core.notifications.formatter import NotificationFormatter
-from core.scanner_core.live.bybit_client import BybitClient
-
 
 load_dotenv()
 
 
 class TelegramNotifier:
 
-    def __init__(self) -> None:
-        self._token = os.getenv("SCANNER_BOT_TOKEN")
-        self._chat_id = os.getenv("SCANNER_TELEGRAM_CHAT_ID")
+    def __init__(self):
+        self._token = os.getenv("TELEGRAM_BOT_TOKEN")
+        self._chat_id = os.getenv("TELEGRAM_CHAT_ID")
 
-        if not self._token:
-            raise RuntimeError("SCANNER_BOT_TOKEN not set")
-
-        if not self._chat_id:
-            raise RuntimeError("SCANNER_TELEGRAM_CHAT_ID not set")
-
-        self._url = f"https://api.telegram.org/bot{self._token}/sendMessage"
-        self._client = BybitClient()
-
-    # =========================
-    # Candle drawing
-    # =========================
-    def _draw_candles(self, ax, candles):
-        for i, c in enumerate(candles):
-            open_ = c["open"]
-            close = c["close"]
-            high = c["high"]
-            low = c["low"]
-
-            bullish = "#26a69a"
-            bearish = "#ef5350"
-            color = bullish if close >= open_ else bearish
-
-            ax.plot([i, i], [low, high], color=color, linewidth=1)
-
-            lower = min(open_, close)
-            height = abs(close - open_)
-            rect = Rectangle(
-                (i - 0.35, lower),
-                0.7,
-                height if height > 0 else 0.000001,
-                facecolor=color,
-                edgecolor=color,
-            )
-            ax.add_patch(rect)
-
-        ax.set_xlim(-1, len(candles))
-        ax.grid(True, linestyle="--", alpha=0.2)
-
-    # =========================
-    # Trend detection (4H)
-    # =========================
-    def _detect_trend(self, candles):
-        if len(candles) < 30:
-            return "UNKNOWN"
-
-        closes = [c["close"] for c in candles[-30:]]
-        first = closes[0]
-        last = closes[-1]
-
-        change = (last - first) / first
-
-        if change > 0.02:
-            return "TREND UP"
-        elif change < -0.02:
-            return "TREND DOWN"
-        else:
-            return "RANGE"
-
-    # =========================
-    # MAIN
-    # =========================
+    # ==========================================================
     def handle(self, event: Event) -> None:
 
         if event.type not in {
             EventType.CORRECTION_STARTED,
+            EventType.ZONE_REACTED,
+            EventType.SCENARIO_CONFIRMED,
+            EventType.SCENARIO_CANCELLED,
+            EventType.SCENARIO_COMPLETED,
             EventType.WATCHLIST_UPDATED,
         }:
             return
 
-        text = NotificationFormatter.format(event)
-        if not text:
+        message = NotificationFormatter.format(event)
+
+        if not message:
+            message = f"{event.type.value} | {event.symbol}"
+
+        image = None
+
+        # 🔥 Строим график для всех фаз сценария
+        if event.type in {
+            EventType.CORRECTION_STARTED,
+            EventType.ZONE_REACTED,
+            EventType.SCENARIO_CONFIRMED,
+            EventType.SCENARIO_CANCELLED,
+            EventType.SCENARIO_COMPLETED,
+        }:
+            image = self._build_chart(event)
+
+        self._send(message, image)
+
+    # ==========================================================
+    def _draw_candles(self, ax, candles):
+
+        for i, c in enumerate(candles):
+            color = "green" if c["close"] >= c["open"] else "red"
+            ax.plot([i, i], [c["low"], c["high"]], color=color)
+            ax.plot([i, i], [c["open"], c["close"]], color=color, linewidth=3)
+
+        ax.grid(True)
+
+    # ==========================================================
+    def _build_chart(self, event: Event) -> Optional[bytes]:
+
+        payload = event.payload or {}
+
+        candles_5m = payload.get("candles_5m")
+        candles_4h = payload.get("candles_4h")
+
+        if not candles_5m or not candles_4h:
+            return None
+
+        direction = payload.get("direction")
+        start_index = payload.get("start_index")
+        end_index = payload.get("end_index")
+        correction_start = payload.get("correction_start_index")
+        current_index = payload.get("current_index")
+        global_trend = payload.get("global_trend")
+
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(11, 9))
+
+        # ----- 4H -----
+        self._draw_candles(ax1, candles_4h)
+        ax1.set_title(f"{event.symbol} | 4H | Global Trend: {global_trend}")
+
+        # ----- 5M -----
+        self._draw_candles(ax2, candles_5m)
+        ax2.set_title(f"{event.symbol} | 5M")
+
+        # Impulse
+        if start_index is not None and end_index is not None:
+            color = "green" if direction == "LONG" else "red"
+            ax2.axvspan(start_index, end_index, color=color, alpha=0.15)
+
+        # Correction
+        if correction_start is not None and current_index is not None:
+            color = "yellow" if direction == "LONG" else "blue"
+            ax2.axvspan(correction_start, current_index, color=color, alpha=0.25)
+
+        plt.tight_layout()
+
+        buf = io.BytesIO()
+        plt.savefig(buf, format="png")
+        plt.close(fig)
+        buf.seek(0)
+
+        return buf.read()
+
+    # ==========================================================
+    def _send(self, text: str, image: Optional[bytes]) -> None:
+
+        if not self._token or not self._chat_id:
             return
 
-        if event.type == EventType.CORRECTION_STARTED:
+        r = requests.post(
+            f"https://api.telegram.org/bot{self._token}/sendMessage",
+            data={"chat_id": self._chat_id, "text": text},
+        )
 
-            symbol = event.symbol
-            payload = event.payload or {}
-            duration = payload.get("duration_candles", 6)
-
-            try:
-                data_4h = self._client.get_candles(
-                    symbol=symbol,
-                    interval="240",
-                    limit=120,
-                )
-                candles_4h = data_4h.get("candles", [])
-
-                data_5m = self._client.get_candles(
-                    symbol=symbol,
-                    interval="5",
-                    limit=120,
-                )
-                candles_5m = data_5m.get("candles", [])
-
-            except Exception as e:
-                print(f"[TELEGRAM ERROR] Failed to fetch candles: {e}")
-                self._send_message(text)
-                return
-
-            if not candles_4h:
-                self._send_message(text)
-                return
-
-            # 🔥 Detect trend
-            trend = self._detect_trend(candles_4h)
-
-            # add trend to caption
-            text = f"{text}\n\n<b>Глобальный тренд:</b> {trend}"
-
-            tmp_path = None
-
-            try:
-                fig, axes = plt.subplots(2, 1, figsize=(12, 8))
-
-                ax1 = axes[0]
-                ax1.set_title(f"{symbol} • 4H")
-                self._draw_candles(ax1, candles_4h)
-
-                start_index = max(len(candles_4h) - duration - 1, 0)
-                end_index = len(candles_4h) - 1
-
-                ax1.axvspan(
-                    start_index,
-                    end_index,
-                    color="#2196f3",
-                    alpha=0.15,
-                )
-
-                ax2 = axes[1]
-                ax2.set_title(f"{symbol} • 5M")
-                self._draw_candles(ax2, candles_5m)
-
-                plt.tight_layout()
-
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-                    tmp_path = tmp.name
-
-                plt.savefig(tmp_path, dpi=150)
-                plt.close()
-
-                photo_url = f"https://api.telegram.org/bot{self._token}/sendPhoto"
-
-                with open(tmp_path, "rb") as photo:
-                    response = requests.post(
-                        photo_url,
-                        data={
-                            "chat_id": self._chat_id,
-                            "caption": text,
-                            "parse_mode": "HTML",
-                        },
-                        files={"photo": photo},
-                        timeout=10,
-                    )
-
-                print(f"[TELEGRAM PHOTO] status_code={response.status_code}")
-
-            except Exception as e:
-                print(f"[TELEGRAM ERROR] {e}")
-                self._send_message(text)
-
-            finally:
-                if tmp_path and os.path.exists(tmp_path):
-                    os.remove(tmp_path)
-
-            return
-
-        self._send_message(text)
-
-    # =========================
-    def _send_message(self, text: str):
-        payload = {
-            "chat_id": self._chat_id,
-            "text": text,
-            "parse_mode": "HTML",
-            "disable_web_page_preview": True,
-        }
-
-        response = requests.post(self._url, json=payload, timeout=5)
-        print(f"[TELEGRAM MESSAGE] status_code={response.status_code}")
+        if image:
+            requests.post(
+                f"https://api.telegram.org/bot{self._token}/sendPhoto",
+                files={"photo": image},
+                data={"chat_id": self._chat_id},
+            )

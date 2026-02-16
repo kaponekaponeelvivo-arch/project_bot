@@ -5,32 +5,26 @@ from .event_types import EventType
 
 
 class EventBus:
-    """
-    Collects events during one engine cycle.
-    Handles priority ordering and deduplication.
-    """
 
-    # Higher index = higher priority
     _PRIORITY_ORDER = [
-        # Context / structure (highest priority)
+
+        # Context
         EventType.CONTEXT_INVALIDATED,
         EventType.MARKET_CONTEXT_CHANGED,
-        EventType.STRUCTURE_BROKEN,
 
         # Scenario lifecycle
         EventType.SCENARIO_CANCELLED,
-        EventType.SCENARIO_COMPLETED,
         EventType.SCENARIO_CONFIRMED,
-        EventType.SCENARIO_STARTED,
 
-        # Zones & reaction
-        EventType.ZONE_INVALIDATED,
+        # Reaction
         EventType.ZONE_REACTED,
 
-        # Impulse / correction
+        # Correction / Impulse
         EventType.CORRECTION_STARTED,
-        EventType.IMPULSE_EXHAUSTED,
         EventType.IMPULSE_DETECTED,
+
+        # Watchlist
+        EventType.WATCHLIST_UPDATED,
     ]
 
     def __init__(self) -> None:
@@ -38,9 +32,6 @@ class EventBus:
         self._dedup: set[Tuple[str, EventType]] = set()
 
     def publish(self, event: Event) -> None:
-        """
-        Add event to bus with deduplication by (symbol, event_type).
-        """
         key = (event.symbol, event.type)
         if key in self._dedup:
             return
@@ -52,9 +43,6 @@ class EventBus:
         return bool(self._events)
 
     def drain(self) -> List[Event]:
-        """
-        Return events sorted by priority and clear bus.
-        """
         ordered = sorted(
             self._events,
             key=lambda e: self._priority_index(e.type),

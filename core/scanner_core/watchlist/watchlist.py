@@ -9,16 +9,11 @@ from .priority import STATE_TO_PRIORITY, WatchPriority
 
 
 class Watchlist:
-    """
-    Aggregated watchlist with priorities.
-    Emits ONE event with full snapshot.
-    """
 
     def __init__(self) -> None:
         self._items: Dict[str, ScenarioState] = {}
+        self._last_snapshot = None  # 🔥 новое
 
-    # ===============================
-    # CORE API (used by Engine)
     # ===============================
     def update(self, symbol: str, state: ScenarioState) -> None:
         if state in (ScenarioState.COMPLETED, ScenarioState.CANCELLED):
@@ -30,17 +25,6 @@ class Watchlist:
     def remove(self, symbol: str) -> None:
         self._items.pop(symbol, None)
 
-    # ===============================
-    # TEST / DEV COMPATIBILITY
-    # ===============================
-    def process(self, symbol: str, market_data: dict) -> None:
-        """
-        Compatibility layer for manual tests.
-        """
-        self.update(symbol, ScenarioState.TREND_ACTIVE)
-
-    # ===============================
-    # SNAPSHOT
     # ===============================
     def snapshot(self) -> Dict[WatchPriority, List[str]]:
         buckets: Dict[WatchPriority, List[str]] = defaultdict(list)
@@ -58,28 +42,14 @@ class Watchlist:
         return dict(sorted(buckets.items(), key=lambda x: x[0].value))
 
     # ===============================
-    # UX HELPERS (tests / console)
-    # ===============================
-    def summary(self) -> str:
-        snapshot = self.snapshot()
-        if not snapshot:
-            return "📊 WATCHLIST:\n(пусто)"
-
-        lines = ["📊 WATCHLIST:"]
-        for priority, symbols in snapshot.items():
-            lines.append(f"{priority.name}:")
-            for s in symbols:
-                lines.append(f"  • {s}")
-
-        return "\n".join(lines)
-
-    # ===============================
-    # EMIT
-    # ===============================
     def emit(self, event_bus: EventBus) -> None:
         snapshot = self.snapshot()
-        if not snapshot:
+
+        # 🔥 Публикуем только если изменилось
+        if snapshot == self._last_snapshot:
             return
+
+        self._last_snapshot = snapshot
 
         event_bus.publish(
             Event(

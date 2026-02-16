@@ -1,23 +1,38 @@
-from typing import Optional
+# core/scanner_core/state_machine/state_machine.py
 
 from core.scanner_core.state_machine.states import ScenarioState
-from core.scanner_core.state_machine.transitions import TRANSITIONS
-from core.scanner_core.events.event_types import EventType
 
 
 class StateMachine:
     """
-    Stateless finite state machine.
-    Decides whether transition is allowed.
+    Structural phase validator.
+
+    This FSM no longer manages linear transitions.
+    It only validates that a target phase is allowed
+    in the structural model.
+
+    Market structure is source of truth.
     """
 
+    # ==========================================================
+    # VALIDATION
+    # ==========================================================
     @staticmethod
-    def transition(
-        current_state: ScenarioState,
-        event_type: EventType,
-    ) -> Optional[ScenarioState]:
-        transitions = TRANSITIONS.get(current_state)
-        if not transitions:
-            return None
+    def is_valid(target_state: ScenarioState) -> bool:
+        """
+        Validates that target phase exists
+        in structural lifecycle model.
+        """
 
-        return transitions.get(event_type)
+        allowed_states = {
+            ScenarioState.IDLE,
+            ScenarioState.TREND_ACTIVE,
+            ScenarioState.IMPULSE,
+            ScenarioState.CORRECTION,
+            ScenarioState.REACTION,
+            ScenarioState.CONFIRMED,
+            ScenarioState.CANCELLED,
+            ScenarioState.COMPLETED,
+        }
+
+        return target_state in allowed_states

@@ -7,22 +7,20 @@ from core.scanner_core.live.bybit_client import BybitClient
 
 class BybitRunner:
     """
-    Live market runner for Bybit (READ-ONLY).
+    Live market runner (multi-TF)
 
-    - Fetches candles from Bybit
-    - Feeds them into ScannerEngine
-    - Prints basic activity to terminal (UX)
+    5M  -> Working TF
+    1H  -> Impulse TF
+    4H  -> Global trend TF
     """
 
     def __init__(
         self,
         symbols: List[str],
-        interval: str = "1",   # 1m candles (test mode)
-        limit: int = 200,      # enough for context + impulse
-        loop_delay: int = 60,  # seconds
+        limit: int = 200,
+        loop_delay: int = 60,
     ) -> None:
         self.symbols = symbols
-        self.interval = interval
         self.limit = limit
         self.loop_delay = loop_delay
 
@@ -32,8 +30,8 @@ class BybitRunner:
     def run(self) -> None:
         print("=" * 50)
         print("[BYBIT] Live runner started")
-        print(f"[BYBIT] Symbols: {len(self.symbols)}")
-        print(f"[BYBIT] Timeframe: {self.interval}m | Limit: {self.limit}")
+        print(f"[BYBIT] Symbols loaded: {len(self.symbols)}")
+        print("[BYBIT] TF: 5M | 1H | 4H")
         print("=" * 50)
 
         while True:
@@ -41,17 +39,45 @@ class BybitRunner:
                 try:
                     print(f"[BYBIT] Fetching candles: {symbol}")
 
-                    market_data = self._client.get_candles(
+                    # 5M working TF
+                    working_data = self._client.get_candles(
                         symbol=symbol,
-                        interval=self.interval,
+                        interval="5",
                         limit=self.limit,
                     )
 
-                    if not market_data or not market_data.get("candles"):
-                        print(f"[BYBIT][WARN] No candles for {symbol}")
+                    if not working_data or not working_data.get("candles"):
+                        print(f"[BYBIT][WARN] No 5M candles for {symbol}")
                         continue
 
-                    self._engine.run(symbol, market_data)
+                    # 1H impulse TF
+                    impulse_data = self._client.get_candles(
+                        symbol=symbol,
+                        interval="60",
+                        limit=self.limit,
+                    )
+
+                    if not impulse_data or not impulse_data.get("candles"):
+                        print(f"[BYBIT][WARN] No 1H candles for {symbol}")
+                        continue
+
+                    # 4H context TF
+                    context_data = self._client.get_candles(
+                        symbol=symbol,
+                        interval="240",
+                        limit=self.limit,
+                    )
+
+                    if not context_data or not context_data.get("candles"):
+                        print(f"[BYBIT][WARN] No 4H candles for {symbol}")
+                        continue
+
+                    self._engine.run(
+                        symbol=symbol,
+                        market_data=working_data,
+                        impulse_data=impulse_data,
+                        context_data=context_data,
+                    )
 
                 except Exception as e:
                     print(f"[BYBIT][ERROR] {symbol}: {e}")
@@ -64,34 +90,13 @@ class BybitRunner:
 # ==================================================
 if __name__ == "__main__":
 
-    # 🔹 Expanded liquid symbols (Bybit USDT Perpetuals)
-    SYMBOLS = [
-        "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT",
-        "ADAUSDT", "AVAXUSDT", "DOGEUSDT", "DOTUSDT", "LINKUSDT",
-        "MATICUSDT", "TONUSDT", "LTCUSDT", "BCHUSDT", "TRXUSDT",
-        "OPUSDT", "ARBUSDT", "APTUSDT", "NEARUSDT", "ATOMUSDT",
-        "UNIUSDT", "SUIUSDT", "SEIUSDT", "TIAUSDT", "INJUSDT",
-        "FILUSDT", "AAVEUSDT", "FTMUSDT", "ALGOUSDT", "XLMUSDT",
-        "ETCUSDT", "MKRUSDT", "EGLDUSDT", "THETAUSDT", "RUNEUSDT",
-        "GRTUSDT", "IMXUSDT", "PEPEUSDT", "WIFUSDT", "BONKUSDT",
-        "JUPUSDT", "PYTHUSDT", "ENAUSDT", "RNDRUSDT", "LDOUSDT",
-        "EOSUSDT", "STXUSDT", "ICPUSDT", "HBARUSDT", "FLOWUSDT",
-        "VETUSDT", "SANDUSDT", "MANAUSDT", "AXSUSDT", "CHZUSDT",
-        "KASUSDT", "GMTUSDT", "DYDXUSDT", "CRVUSDT", "1INCHUSDT",
-        "COMPUSDT", "SNXUSDT", "YFIUSDT", "KAVAUSDT", "ZILUSDT",
-        "ROSEUSDT", "CELOUSDT", "BLURUSDT", "PENDLEUSDT", "ORDIUSDT",
-        "BOMEUSDT", "NOTUSDT", "WLDUSDT", "TAOUSDT", "ONDOUSDT",
-        "JASMYUSDT", "FETUSDT", "AGIXUSDT", "OCEANUSDT", "ANKRUSDT",
-        "CFXUSDT", "QNTUSDT", "BATUSDT", "ZRXUSDT", "NKNUSDT",
-        "SFPUSDT", "RAYUSDT", "TRBUSDT", "ENSUSDT", "MASKUSDT",
-        "API3USDT", "GMXUSDT", "ARUSDT", "MEMEUSDT", "NEOUSDT",
-    ]
+    client = BybitClient()
+    symbols = client.get_top_symbols(limit=100)
 
     runner = BybitRunner(
-        symbols=SYMBOLS,
-        interval="1",     # 1m = ускоренное тестирование
+        symbols=symbols,
         limit=200,
-        loop_delay=60,    # обновление раз в минуту
+        loop_delay=60,
     )
 
     runner.run()

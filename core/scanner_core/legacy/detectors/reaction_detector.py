@@ -39,7 +39,13 @@ class ReactionDetector:
             Event(
                 type=EventType.ZONE_TOUCHED,
                 symbol=symbol,
-                payload={"zone_id": zone.id},
+                payload={
+                    "zone_id": zone.id,
+                    "zone_type": zone.zone_type,
+                    "price_from": zone.price_from,
+                    "price_to": zone.price_to,
+                    "correction_depth_pct": getattr(zone, "correction_depth_pct", None),
+                },
             )
         )
 
@@ -67,6 +73,12 @@ class ReactionDetector:
                 Event(
                     type=EventType.ZONE_REACTED,
                     symbol=symbol,
-                    payload={"zone_id": zone.id},
+                    payload={
+                        "zone_id": zone.id,
+                        "zone_type": zone.zone_type,
+                        "price_from": zone.price_from,
+                        "price_to": zone.price_to,
+                        "correction_depth_pct": getattr(zone, "correction_depth_pct", None),
+                    },
                 )
             )
