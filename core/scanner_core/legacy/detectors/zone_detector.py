@@ -6,14 +6,11 @@ from core.scanner_core.state_machine.states import ScenarioState
 
 
 class ZoneDetector:
-    """
-    Detects FVG or fallback fib zone during CORRECTION phase.
-    """
 
     def analyze(
         self,
         symbol: str,
-        impulse_data: dict,      # 1H
+        impulse_data: dict,
         scenario,
         event_bus: EventBus,
     ) -> None:
@@ -21,68 +18,71 @@ class ZoneDetector:
         if scenario.state != ScenarioState.CORRECTION:
             return
 
-        impulse_event = next(
+        correction_event = next(
             (e for e in reversed(scenario.events)
              if e.type == EventType.CORRECTION_STARTED),
             None,
         )
 
-        if not impulse_event:
+        if not correction_event:
             return
 
-        impulse_high = impulse_event.payload.get("impulse_high")
-        impulse_low = impulse_event.payload.get("impulse_low")
+        payload = correction_event.payload
+        end_index = payload.get("end_index")
 
         candles: List[dict] = impulse_data.get("candles", [])
-        if len(candles) < 3:
+        if not candles or end_index is None:
             return
 
-        # ===============================
-        # 1️⃣ Try FVG (3-candle gap)
-        # ===============================
-        fvg_zone = self._find_fvg(candles)
+        # Ограничиваем поиск только зоной коррекции
+        correction_candles = candles[end_index:]
+        if len(correction_candles) < 3:
+            return
+
+        fvg_zone = self._find_fvg(correction_candles)
 
         if fvg_zone:
-            payload = impulse_event.payload.copy()
-            payload["zone_type"] = "FVG"
-            payload["zone_from"] = fvg_zone["low"]
-            payload["zone_to"] = fvg_zone["high"]
+            new_payload = payload.copy()
+            new_payload["zone_type"] = "FVG"
+            new_payload["zone_from"] = fvg_zone["low"]
+            new_payload["zone_to"] = fvg_zone["high"]
 
             event_bus.publish(
                 Event(
                     type=EventType.ZONE_REACTED,
                     symbol=symbol,
-                    payload=payload,
+                    payload=new_payload,
                 )
             )
             return
 
-        # ===============================
-        # 2️⃣ Fallback Fibonacci 0.618–0.782
-        # ===============================
+        # fallback fib
+        impulse_high = payload.get("impulse_high")
+        impulse_low = payload.get("impulse_low")
+
+        if impulse_high is None or impulse_low is None:
+            return
+
         fib_618 = impulse_low + (impulse_high - impulse_low) * 0.618
         fib_782 = impulse_low + (impulse_high - impulse_low) * 0.782
 
-        payload = impulse_event.payload.copy()
-        payload["zone_type"] = "FIB"
-        payload["zone_from"] = round(fib_618, 6)
-        payload["zone_to"] = round(fib_782, 6)
+        new_payload = payload.copy()
+        new_payload["zone_type"] = "FIB"
+        new_payload["zone_from"] = round(fib_618, 6)
+        new_payload["zone_to"] = round(fib_782, 6)
 
         event_bus.publish(
             Event(
                 type=EventType.ZONE_REACTED,
                 symbol=symbol,
-                payload=payload,
+                payload=new_payload,
             )
         )
-
-    # ==========================================================
 
     def _find_fvg(self, candles: List[dict]) -> Optional[Dict[str, Any]]:
 
         for i in range(1, len(candles) - 1):
             prev = candles[i - 1]
-            curr = candles[i]
             next_c = candles[i + 1]
 
             if prev["high"] < next_c["low"]:

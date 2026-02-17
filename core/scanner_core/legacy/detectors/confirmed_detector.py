@@ -6,16 +6,13 @@ from core.scanner_core.state_machine.states import ScenarioState
 
 
 class ConfirmedDetector:
-    """
-    Calculates entry, stop and TP levels.
-    """
 
     STOP_BUFFER_PERCENT = 1.0
 
     def analyze(
         self,
         symbol: str,
-        market_data: dict,      # 5M
+        market_data: dict,
         scenario,
         event_bus: EventBus,
     ) -> None:
@@ -41,46 +38,39 @@ class ConfirmedDetector:
         payload = reaction_event.payload.copy()
 
         direction = payload.get("direction")
-        impulse_high = payload.get("impulse_high")
-        impulse_low = payload.get("impulse_low")
+        end_index = payload.get("end_index")
+        candles_1h = payload.get("candles_1h")
 
-        if None in (direction, impulse_high, impulse_low):
+        if None in (direction, end_index) or not candles_1h:
             return
 
-        # ===============================
-        # ENTRY
-        # ===============================
+        # Ограничиваем коррекционной частью
+        correction_1h = candles_1h[end_index:]
+        if not correction_1h:
+            return
+
         entry_price = last["close"]
 
-        # ===============================
-        # STOP (correction extreme ±1%)
-        # ===============================
-        correction_low = min(
-            c["low"] for c in payload.get("candles_1h", [])
-        )
-        correction_high = max(
-            c["high"] for c in payload.get("candles_1h", [])
-        )
-
         if direction == "LONG":
+            correction_low = min(c["low"] for c in correction_1h)
             stop_price = correction_low * (1 - self.STOP_BUFFER_PERCENT / 100)
         else:
+            correction_high = max(c["high"] for c in correction_1h)
             stop_price = correction_high * (1 + self.STOP_BUFFER_PERCENT / 100)
 
         risk = abs(entry_price - stop_price)
-
         if risk <= 0:
             return
 
-        # ===============================
-        # TP LEVELS
-        # ===============================
+        impulse_high = payload.get("impulse_high")
+        impulse_low = payload.get("impulse_low")
+
         if direction == "LONG":
-            tp1 = entry_price + risk * 1
+            tp1 = entry_price + risk
             tp2 = entry_price + risk * 2
             tp3 = impulse_high
         else:
-            tp1 = entry_price - risk * 1
+            tp1 = entry_price - risk
             tp2 = entry_price - risk * 2
             tp3 = impulse_low
 
