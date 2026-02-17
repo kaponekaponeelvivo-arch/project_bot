@@ -56,34 +56,36 @@ class ScannerEngine:
                 direction="LONG",
             )
 
-        # ===============================
+        # ======================================================
         # 1️⃣ STRUCTURE
-        # ===============================
+        # ======================================================
+
         structure = self._structure.analyze(
             symbol=symbol,
             market_data=market_data,
             impulse_data=impulse_data,
             context_data=context_data,
-            market_context=None,  # можно позже подключить ContextAnalyzer
+            market_context=None,
         )
 
-        if not structure or not structure.get("phase"):
-            return
+        if structure and structure.get("phase"):
+            phase = structure["phase"]
+            payload = structure.get("payload", {})
 
-        phase = structure["phase"]
-        payload = structure.get("payload", {})
-
-        self._event_bus.publish(
-            Event(
-                type=self._map_phase_to_event(phase),
-                symbol=symbol,
-                payload=payload,
+            self._event_bus.publish(
+                Event(
+                    type=self._map_phase_to_event(phase),
+                    symbol=symbol,
+                    payload=payload,
+                )
             )
-        )
 
-        # ===============================
-        # 2️⃣ ZONE (FVG / Fib)
-        # ===============================
+        self._drain_and_apply(scenario)
+
+        # ======================================================
+        # 2️⃣ ZONE (FVG / FIB)
+        # ======================================================
+
         self._zone_detector.analyze(
             symbol=symbol,
             impulse_data=impulse_data,
@@ -91,9 +93,12 @@ class ScannerEngine:
             event_bus=self._event_bus,
         )
 
-        # ===============================
+        self._drain_and_apply(scenario)
+
+        # ======================================================
         # 3️⃣ REACTION (15M)
-        # ===============================
+        # ======================================================
+
         self._reaction_detector.analyze(
             symbol=symbol,
             reaction_data=reaction_data,
@@ -101,9 +106,12 @@ class ScannerEngine:
             event_bus=self._event_bus,
         )
 
-        # ===============================
+        self._drain_and_apply(scenario)
+
+        # ======================================================
         # 4️⃣ CONFIRMATION (5M)
-        # ===============================
+        # ======================================================
+
         self._confirmed_detector.analyze(
             symbol=symbol,
             market_data=market_data,
@@ -111,9 +119,12 @@ class ScannerEngine:
             event_bus=self._event_bus,
         )
 
-        # ===============================
-        # 5️⃣ COMPLETION (TP2 / Stop)
-        # ===============================
+        self._drain_and_apply(scenario)
+
+        # ======================================================
+        # 5️⃣ COMPLETION (TP2 / STOP)
+        # ======================================================
+
         self._completed_detector.analyze(
             symbol=symbol,
             market_data=market_data,
@@ -121,20 +132,30 @@ class ScannerEngine:
             event_bus=self._event_bus,
         )
 
-        # ===============================
-        # APPLY EVENTS
-        # ===============================
-        while self._event_bus.has_events():
-            events = self._event_bus.drain()
+        self._drain_and_apply(scenario)
 
-            for event in events:
-                self._apply_event(scenario, event)
+        # ======================================================
+        # TERMINAL CLEANUP
+        # ======================================================
 
         if scenario.state in (
             ScenarioState.COMPLETED,
             ScenarioState.CANCELLED,
         ):
             self._scenario_manager.remove(symbol)
+
+    # ==========================================================
+
+    def _drain_and_apply(self, scenario) -> None:
+        """
+        Apply all queued events immediately.
+        Ensures next detector sees updated scenario.state.
+        """
+        while self._event_bus.has_events():
+            events = self._event_bus.drain()
+
+            for event in events:
+                self._apply_event(scenario, event)
 
     # ==========================================================
 
