@@ -1,60 +1,35 @@
-from typing import List, Tuple
-
-from .event import Event
-from .event_types import EventType
+from typing import List, Tuple, Set
+from core.scanner_core.events.event import Event
+from core.scanner_core.events.event_types import EventType
 
 
 class EventBus:
 
-    _PRIORITY_ORDER = [
-
-        # Context
-        EventType.CONTEXT_INVALIDATED,
-        EventType.MARKET_CONTEXT_CHANGED,
-
-        # Scenario lifecycle
-        EventType.SCENARIO_CANCELLED,
-        EventType.SCENARIO_CONFIRMED,
-
-        # Reaction
-        EventType.ZONE_REACTED,
-
-        # Correction / Impulse
-        EventType.CORRECTION_STARTED,
-        EventType.IMPULSE_DETECTED,
-
-        # Watchlist
-        EventType.WATCHLIST_UPDATED,
-    ]
-
     def __init__(self) -> None:
         self._events: List[Event] = []
-        self._dedup: set[Tuple[str, EventType]] = set()
+        self._dedup: Set[Tuple[str, EventType]] = set()
+        self._history: Set[Tuple[str, EventType]] = set()
 
     def publish(self, event: Event) -> None:
         key = (event.symbol, event.type)
+
+        # защита в рамках одного тика
         if key in self._dedup:
             return
 
+        # защита в рамках активного сценария
+        if key in self._history:
+            return
+
         self._dedup.add(key)
+        self._history.add(key)
         self._events.append(event)
 
-    def has_events(self) -> bool:
-        return bool(self._events)
-
     def drain(self) -> List[Event]:
-        ordered = sorted(
-            self._events,
-            key=lambda e: self._priority_index(e.type),
-            reverse=True,
-        )
-
+        events = list(self._events)
         self._events.clear()
         self._dedup.clear()
-        return ordered
+        return events
 
-    def _priority_index(self, event_type: EventType) -> int:
-        try:
-            return self._PRIORITY_ORDER.index(event_type)
-        except ValueError:
-            return -1
+    def clear_history(self, symbol: str) -> None:
+        self._history = {k for k in self._history if k[0] != symbol}
