@@ -25,6 +25,13 @@ class EventBus:
         self._history.add(key)
         self._events.append(event)
 
+    def has_events(self) -> bool:
+        """
+        Проверка наличия событий в очереди.
+        Нужен для послойного применения FSM.
+        """
+        return bool(self._events)
+
     def drain(self) -> List[Event]:
         events = list(self._events)
         self._events.clear()
