@@ -30,8 +30,10 @@ class ScannerEngine:
     def run(
         self,
         symbol: str,
-        detected_event: EventType,
-        payload: dict | None = None,
+        market_data: dict,     # 5M
+        reaction_data: dict,   # 15M
+        impulse_data: dict,    # 1H
+        context_data: dict,    # 4H
     ) -> None:
 
         scenario = self._scenario_manager.get(symbol)
@@ -42,10 +44,20 @@ class ScannerEngine:
                 direction="LONG",
             )
 
+        # ==================================================
+        # Пока просто заглушка события, чтобы система работала
+        # Реальную логику анализа добавим следующим шагом
+        # ==================================================
+
         event = Event(
-            type=detected_event,
+            type=EventType.MARKET_CONTEXT_CHANGED,
             symbol=symbol,
-            payload=payload,
+            payload={
+                "candles_5m": market_data.get("candles"),
+                "candles_15m": reaction_data.get("candles"),
+                "candles_1h": impulse_data.get("candles"),
+                "candles_4h": context_data.get("candles"),
+            },
         )
 
         self._event_bus.publish(event)

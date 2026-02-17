@@ -9,8 +9,9 @@ class BybitRunner:
     """
     Live market runner (multi-TF)
 
-    5M  -> Working TF
-    1H  -> Impulse TF
+    5M  -> Entry / Confirmation TF
+    15M -> Reaction TF
+    1H  -> Impulse / Correction TF
     4H  -> Global trend TF
     """
 
@@ -31,7 +32,7 @@ class BybitRunner:
         print("=" * 50)
         print("[BYBIT] Live runner started")
         print(f"[BYBIT] Symbols loaded: {len(self.symbols)}")
-        print("[BYBIT] TF: 5M | 1H | 4H")
+        print("[BYBIT] TF: 5M | 15M | 1H | 4H")
         print("=" * 50)
 
         while True:
@@ -39,7 +40,9 @@ class BybitRunner:
                 try:
                     print(f"[BYBIT] Fetching candles: {symbol}")
 
-                    # 5M working TF
+                    # ===============================
+                    # 5M – Entry / Confirmation
+                    # ===============================
                     working_data = self._client.get_candles(
                         symbol=symbol,
                         interval="5",
@@ -50,7 +53,22 @@ class BybitRunner:
                         print(f"[BYBIT][WARN] No 5M candles for {symbol}")
                         continue
 
-                    # 1H impulse TF
+                    # ===============================
+                    # 15M – Reaction TF
+                    # ===============================
+                    reaction_data = self._client.get_candles(
+                        symbol=symbol,
+                        interval="15",
+                        limit=self.limit,
+                    )
+
+                    if not reaction_data or not reaction_data.get("candles"):
+                        print(f"[BYBIT][WARN] No 15M candles for {symbol}")
+                        continue
+
+                    # ===============================
+                    # 1H – Impulse / Correction
+                    # ===============================
                     impulse_data = self._client.get_candles(
                         symbol=symbol,
                         interval="60",
@@ -61,7 +79,9 @@ class BybitRunner:
                         print(f"[BYBIT][WARN] No 1H candles for {symbol}")
                         continue
 
-                    # 4H context TF
+                    # ===============================
+                    # 4H – Global Trend
+                    # ===============================
                     context_data = self._client.get_candles(
                         symbol=symbol,
                         interval="240",
@@ -74,9 +94,10 @@ class BybitRunner:
 
                     self._engine.run(
                         symbol=symbol,
-                        market_data=working_data,
-                        impulse_data=impulse_data,
-                        context_data=context_data,
+                        market_data=working_data,      # 5M
+                        reaction_data=reaction_data,  # 15M
+                        impulse_data=impulse_data,    # 1H
+                        context_data=context_data,    # 4H
                     )
 
                 except Exception as e:

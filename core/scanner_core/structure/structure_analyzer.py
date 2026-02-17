@@ -5,17 +5,21 @@ from core.scanner_core.market_context.context import ContextValidity
 
 class StructureAnalyzer:
 
-    IMPULSE_THRESHOLD = 0.15
-    CORRECTION_THRESHOLD = 0.30
-    LOOKBACK_CANDLES = 200
+    LOOKBACK_CANDLES = 300
+    MIN_IMPULSE_PERCENT = 25.0
+    MIN_IMPULSE_CANDLES = 15
+
+    MIN_CORRECTION_PERCENT = 30.0
+    MAX_CORRECTION_PERCENT = 80.0
 
     # ==========================================================
+
     def analyze(
         self,
         symbol: str,
-        market_data: dict,
-        impulse_data: dict,
-        context_data: dict,
+        market_data: dict,     # 5M
+        impulse_data: dict,    # 1H
+        context_data: dict,    # 4H
         market_context,
     ) -> Dict[str, Any]:
 
@@ -23,7 +27,7 @@ class StructureAnalyzer:
         if not direction:
             return {"direction": None, "phase": None}
 
-        impulse = self._find_last_impulse(impulse_data, direction)
+        impulse = self._find_impulse(impulse_data, direction)
         if not impulse:
             return {
                 "direction": direction,
@@ -32,26 +36,33 @@ class StructureAnalyzer:
 
         current_price = market_data["candles"][-1]["close"]
 
-        retrace_ratio = self._calculate_retracement(
+        retrace_percent = self._calculate_retracement_percent(
             current_price=current_price,
             impulse=impulse,
             direction=direction,
         )
 
-        payload = impulse.copy()
+        # отмена при слишком глубокой коррекции
+        if retrace_percent > self.MAX_CORRECTION_PERCENT:
+            return {
+                "direction": direction,
+                "phase": ScenarioState.CANCELLED,
+                "payload": impulse,
+            }
 
+        payload = impulse.copy()
+        payload["direction"] = direction
+        payload["retrace_percent"] = retrace_percent
         payload["candles_5m"] = market_data.get("candles", [])
+        payload["candles_1h"] = impulse_data.get("candles", [])
         payload["candles_4h"] = context_data.get("candles", [])
         payload["global_trend"] = (
             market_context.phase.name
             if market_context and market_context.validity == ContextValidity.VALID
             else None
         )
-        payload["direction"] = direction
-        payload["correction_start_index"] = payload["end_index"]
-        payload["current_index"] = len(payload["candles_5m"]) - 1
 
-        if retrace_ratio < self.CORRECTION_THRESHOLD:
+        if retrace_percent < self.MIN_CORRECTION_PERCENT:
             return {
                 "direction": direction,
                 "phase": ScenarioState.IMPULSE,
@@ -65,6 +76,7 @@ class StructureAnalyzer:
         }
 
     # ==========================================================
+
     def _determine_direction(self, market_context) -> Optional[str]:
 
         if not market_context:
@@ -86,14 +98,15 @@ class StructureAnalyzer:
         return None
 
     # ==========================================================
-    def _find_last_impulse(
+
+    def _find_impulse(
         self,
         impulse_data: dict,
         direction: str,
     ) -> Optional[Dict[str, Any]]:
 
         candles: List[dict] = impulse_data.get("candles", [])
-        if len(candles) < 20:
+        if len(candles) < self.MIN_IMPULSE_CANDLES:
             return None
 
         candles = candles[-self.LOOKBACK_CANDLES:]
@@ -104,126 +117,82 @@ class StructureAnalyzer:
         return self._find_short_impulse(candles)
 
     # ==========================================================
+
     def _find_long_impulse(self, candles: List[dict]) -> Optional[Dict[str, Any]]:
 
-        for peak_index in range(len(candles) - 2, 10, -1):
+        lowest_index = min(range(len(candles)), key=lambda i: candles[i]["low"])
+        lowest_price = candles[lowest_index]["low"]
 
-            peak = candles[peak_index]
-            peak_price = peak["high"]
+        highest_index = max(
+            range(lowest_index, len(candles)),
+            key=lambda i: candles[i]["high"],
+        )
+        highest_price = candles[highest_index]["high"]
 
-            # Проверяем откат после peak
-            after = candles[peak_index + 1:]
-            if not after:
-                continue
+        if highest_index - lowest_index < self.MIN_IMPULSE_CANDLES:
+            return None
 
-            min_after = min(c["low"] for c in after)
-            move_after = peak_price - min_after
+        move_percent = ((highest_price - lowest_price) / lowest_price) * 100
 
-            if move_after <= 0:
-                continue
+        if move_percent < self.MIN_IMPULSE_PERCENT:
+            return None
 
-            retrace_ratio = move_after / (peak_price - min_after + 1e-9)
-            if retrace_ratio < self.CORRECTION_THRESHOLD:
-                continue
-
-            # Ищем low до peak
-            before = candles[:peak_index]
-            if not before:
-                continue
-
-            low_price = min(c["low"] for c in before)
-            move = peak_price - low_price
-
-            if move <= 0:
-                continue
-
-            percent = move / low_price
-            if percent < self.IMPULSE_THRESHOLD:
-                continue
-
-            start_index = next(
-                i for i, c in enumerate(candles[:peak_index])
-                if c["low"] == low_price
-            )
-
-            return {
-                "start_price": low_price,
-                "end_price": peak_price,
-                "move_percent": round(percent * 100, 2),
-                "start_index": start_index,
-                "end_index": peak_index,
-                "impulse_high": peak_price,
-                "impulse_low": low_price,
-            }
-
-        return None
+        return {
+            "start_price": lowest_price,
+            "end_price": highest_price,
+            "move_percent": round(move_percent, 2),
+            "start_index": lowest_index,
+            "end_index": highest_index,
+            "impulse_high": highest_price,
+            "impulse_low": lowest_price,
+        }
 
     # ==========================================================
+
     def _find_short_impulse(self, candles: List[dict]) -> Optional[Dict[str, Any]]:
 
-        for trough_index in range(len(candles) - 2, 10, -1):
+        highest_index = max(range(len(candles)), key=lambda i: candles[i]["high"])
+        highest_price = candles[highest_index]["high"]
 
-            trough = candles[trough_index]
-            trough_price = trough["low"]
+        lowest_index = min(
+            range(highest_index, len(candles)),
+            key=lambda i: candles[i]["low"],
+        )
+        lowest_price = candles[lowest_index]["low"]
 
-            after = candles[trough_index + 1:]
-            if not after:
-                continue
+        if lowest_index - highest_index < self.MIN_IMPULSE_CANDLES:
+            return None
 
-            max_after = max(c["high"] for c in after)
-            move_after = max_after - trough_price
+        move_percent = ((highest_price - lowest_price) / highest_price) * 100
 
-            if move_after <= 0:
-                continue
+        if move_percent < self.MIN_IMPULSE_PERCENT:
+            return None
 
-            retrace_ratio = move_after / (max_after - trough_price + 1e-9)
-            if retrace_ratio < self.CORRECTION_THRESHOLD:
-                continue
-
-            before = candles[:trough_index]
-            if not before:
-                continue
-
-            high_price = max(c["high"] for c in before)
-            move = high_price - trough_price
-
-            if move <= 0:
-                continue
-
-            percent = move / high_price
-            if percent < self.IMPULSE_THRESHOLD:
-                continue
-
-            start_index = next(
-                i for i, c in enumerate(candles[:trough_index])
-                if c["high"] == high_price
-            )
-
-            return {
-                "start_price": high_price,
-                "end_price": trough_price,
-                "move_percent": round(percent * 100, 2),
-                "start_index": start_index,
-                "end_index": trough_index,
-                "impulse_high": high_price,
-                "impulse_low": trough_price,
-            }
-
-        return None
+        return {
+            "start_price": highest_price,
+            "end_price": lowest_price,
+            "move_percent": round(move_percent, 2),
+            "start_index": highest_index,
+            "end_index": lowest_index,
+            "impulse_high": highest_price,
+            "impulse_low": lowest_price,
+        }
 
     # ==========================================================
-    def _calculate_retracement(self, current_price, impulse, direction):
+
+    def _calculate_retracement_percent(self, current_price, impulse, direction):
 
         start = impulse["start_price"]
         end = impulse["end_price"]
         total = abs(end - start)
 
         if total == 0:
-            return 0
+            return 0.0
 
         if direction == "LONG":
             retrace = end - current_price
         else:
             retrace = current_price - end
 
-        return retrace / total
+        retrace_percent = (abs(retrace) / total) * 100
+        return round(retrace_percent, 2)
