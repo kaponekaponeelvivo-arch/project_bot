@@ -2,56 +2,60 @@ from typing import List
 
 from core.scanner_core.events import Event, EventType
 from core.scanner_core.events.event_bus import EventBus
-from core.scanner_core.zones.zone import Zone
+from core.scanner_core.state_machine.states import ScenarioState
 
 
 class ReactionDetector:
     """
-    Detects price reaction from active zones.
-    Reaction != confirmation.
+    Detects reaction on 15M timeframe.
     """
 
     def analyze(
         self,
         symbol: str,
-        market_data: dict,
-        zone: Zone,
-        direction: str,
+        reaction_data: dict,   # 15M
+        scenario,
         event_bus: EventBus,
     ) -> None:
 
-        candles: List[dict] = market_data.get("candles", [])
+        if scenario.state != ScenarioState.CORRECTION:
+            return
+
+        candles: List[dict] = reaction_data.get("candles", [])
         if len(candles) < 1:
             return
 
         last = candles[-1]
 
-        # 1️⃣ Touch zone
+        correction_event = next(
+            (e for e in reversed(scenario.events)
+             if e.type == EventType.CORRECTION_STARTED),
+            None,
+        )
+
+        if not correction_event:
+            return
+
+        zone_from = correction_event.payload.get("zone_from")
+        zone_to = correction_event.payload.get("zone_to")
+        direction = correction_event.payload.get("direction")
+
+        if zone_from is None or zone_to is None:
+            return
+
+        # Touch zone
         touched = (
-            last["low"] <= zone.price_to
-            and last["high"] >= zone.price_from
+            last["low"] <= zone_to and
+            last["high"] >= zone_from
         )
 
         if not touched:
             return
 
-        event_bus.publish(
-            Event(
-                type=EventType.ZONE_TOUCHED,
-                symbol=symbol,
-                payload={
-                    "zone_id": zone.id,
-                    "zone_type": zone.zone_type,
-                    "price_from": zone.price_from,
-                    "price_to": zone.price_to,
-                    "correction_depth_pct": getattr(zone, "correction_depth_pct", None),
-                },
-            )
-        )
-
-        # 2️⃣ Candle reaction
+        # Impulse candle confirmation
         body = abs(last["close"] - last["open"])
         full = last["high"] - last["low"]
+
         if full == 0:
             return
 
@@ -66,19 +70,15 @@ class ReactionDetector:
             direction == "SHORT" and bearish
         )
 
-        impulse_candle = body_ratio >= 0.6
+        if direction_ok and body_ratio >= 0.6:
 
-        if direction_ok and impulse_candle:
+            payload = correction_event.payload.copy()
+            payload["reaction_price"] = last["close"]
+
             event_bus.publish(
                 Event(
-                    type=EventType.ZONE_REACTED,
+                    type=EventType.SCENARIO_CONFIRMED,
                     symbol=symbol,
-                    payload={
-                        "zone_id": zone.id,
-                        "zone_type": zone.zone_type,
-                        "price_from": zone.price_from,
-                        "price_to": zone.price_to,
-                        "correction_depth_pct": getattr(zone, "correction_depth_pct", None),
-                    },
+                    payload=payload,
                 )
             )

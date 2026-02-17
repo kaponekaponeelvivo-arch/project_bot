@@ -1,28 +1,20 @@
-from typing import Optional
+from typing import Optional, List, Dict, Any
 
 from core.scanner_core.events import Event, EventType
 from core.scanner_core.events.event_bus import EventBus
-from core.scanner_core.zones.zone import Zone
-from core.scanner_core.zones.zone_types import ZoneType
-from core.scanner_core.zones.zone_manager import ZoneManager
-from core.scanner_core.state_machine import ScenarioState
+from core.scanner_core.state_machine.states import ScenarioState
 
 
 class ZoneDetector:
     """
-    Detects zones during CORRECTION phase.
+    Detects FVG or fallback fib zone during CORRECTION phase.
     """
-
-    def __init__(self) -> None:
-        self._last_impulse_high: Optional[float] = None
-        self._last_impulse_low: Optional[float] = None
 
     def analyze(
         self,
         symbol: str,
-        market_data: dict,
+        impulse_data: dict,      # 1H
         scenario,
-        zone_manager: ZoneManager,
         event_bus: EventBus,
     ) -> None:
 
@@ -30,10 +22,8 @@ class ZoneDetector:
             return
 
         impulse_event = next(
-            (
-                e for e in reversed(scenario.events)
-                if e.type == EventType.CORRECTION_STARTED
-            ),
+            (e for e in reversed(scenario.events)
+             if e.type == EventType.CORRECTION_STARTED),
             None,
         )
 
@@ -43,49 +33,62 @@ class ZoneDetector:
         impulse_high = impulse_event.payload.get("impulse_high")
         impulse_low = impulse_event.payload.get("impulse_low")
 
-        if impulse_high is None or impulse_low is None:
+        candles: List[dict] = impulse_data.get("candles", [])
+        if len(candles) < 3:
             return
 
-        if (
-            self._last_impulse_high == impulse_high
-            and self._last_impulse_low == impulse_low
-        ):
+        # ===============================
+        # 1️⃣ Try FVG (3-candle gap)
+        # ===============================
+        fvg_zone = self._find_fvg(candles)
+
+        if fvg_zone:
+            payload = impulse_event.payload.copy()
+            payload["zone_type"] = "FVG"
+            payload["zone_from"] = fvg_zone["low"]
+            payload["zone_to"] = fvg_zone["high"]
+
+            event_bus.publish(
+                Event(
+                    type=EventType.ZONE_REACTED,
+                    symbol=symbol,
+                    payload=payload,
+                )
+            )
             return
 
-        self._last_impulse_high = impulse_high
-        self._last_impulse_low = impulse_low
+        # ===============================
+        # 2️⃣ Fallback Fibonacci 0.618–0.782
+        # ===============================
+        fib_618 = impulse_low + (impulse_high - impulse_low) * 0.618
+        fib_782 = impulse_low + (impulse_high - impulse_low) * 0.782
 
-        price_from = impulse_low + (impulse_high - impulse_low) * 0.5
-        price_to = impulse_low + (impulse_high - impulse_low) * 0.618
-
-        price_from = round(price_from, 4)
-        price_to = round(price_to, 4)
-
-        correction_pct = round(
-            ((impulse_high - price_to) / impulse_high) * 100, 2
-        )
-
-        zone = Zone(
-            zone_type=ZoneType.STRUCTURE,
-            price_from=price_from,
-            price_to=price_to,
-        )
-
-        zone_manager.add_zone(
-            zone=zone,
-            event_bus=event_bus,
-            symbol=symbol,
-        )
+        payload = impulse_event.payload.copy()
+        payload["zone_type"] = "FIB"
+        payload["zone_from"] = round(fib_618, 6)
+        payload["zone_to"] = round(fib_782, 6)
 
         event_bus.publish(
             Event(
-                type=EventType.ZONE_CREATED,
+                type=EventType.ZONE_REACTED,
                 symbol=symbol,
-                payload={
-                    "zone_type": zone.zone_type.value,
-                    "price_from": price_from,
-                    "price_to": price_to,
-                    "correction_depth_pct": correction_pct,
-                },
+                payload=payload,
             )
         )
+
+    # ==========================================================
+
+    def _find_fvg(self, candles: List[dict]) -> Optional[Dict[str, Any]]:
+
+        for i in range(1, len(candles) - 1):
+            prev = candles[i - 1]
+            curr = candles[i]
+            next_c = candles[i + 1]
+
+            if prev["high"] < next_c["low"]:
+                return {
+                    "low": prev["high"],
+                    "high": next_c["low"],
+                }
+
+        return None
