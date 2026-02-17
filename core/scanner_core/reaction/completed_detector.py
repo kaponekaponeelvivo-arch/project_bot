@@ -2,50 +2,101 @@ from typing import List
 
 from core.scanner_core.events import Event, EventType
 from core.scanner_core.events.event_bus import EventBus
-from core.scanner_core.state_machine import ScenarioState
+from core.scanner_core.state_machine.states import ScenarioState
 
 
 class CompletedDetector:
     """
-    Detects successful scenario completion.
-    Completion is based ONLY on movement from CONFIRMED price.
+    Detects scenario completion or cancellation
+    based on TP2 or Stop level.
     """
-
-    MIN_MOVE_PERCENT = 3.0  # configurable threshold
 
     def analyze(
         self,
         symbol: str,
-        market_data: dict,
-        scenario_state: ScenarioState,
-        confirm_price: float,
-        direction: str,
+        market_data: dict,          # 5M
+        scenario,
         event_bus: EventBus,
     ) -> None:
 
-        if scenario_state != ScenarioState.CONFIRMED:
+        if scenario.state != ScenarioState.CONFIRMED:
             return
 
         candles: List[dict] = market_data.get("candles", [])
         if not candles:
             return
 
-        last_close = candles[-1]["close"]
+        last = candles[-1]
 
-        if direction == "LONG":
-            move = (last_close - confirm_price) / confirm_price * 100
-        else:
-            move = (confirm_price - last_close) / confirm_price * 100
+        confirmed_event = next(
+            (e for e in reversed(scenario.events)
+             if e.type == EventType.SCENARIO_CONFIRMED),
+            None,
+        )
 
-        if move < self.MIN_MOVE_PERCENT:
+        if not confirmed_event:
             return
 
-        event_bus.publish(
-            Event(
-                type=EventType.SCENARIO_COMPLETED,
-                symbol=symbol,
-                payload={
-                    "move_percent": round(move, 2),
-                },
-            )
-        )
+        payload = confirmed_event.payload
+
+        entry = payload.get("entry_price")
+        stop = payload.get("stop_price")
+        tp2 = payload.get("tp2_price")
+        direction = payload.get("direction")
+
+        if None in (entry, stop, tp2, direction):
+            return
+
+        # ===============================
+        # LONG
+        # ===============================
+        if direction == "LONG":
+
+            # Stop hit
+            if last["low"] <= stop:
+                event_bus.publish(
+                    Event(
+                        type=EventType.SCENARIO_CANCELLED,
+                        symbol=symbol,
+                        payload=payload,
+                    )
+                )
+                return
+
+            # TP2 reached
+            if last["high"] >= tp2:
+                event_bus.publish(
+                    Event(
+                        type=EventType.SCENARIO_COMPLETED,
+                        symbol=symbol,
+                        payload=payload,
+                    )
+                )
+                return
+
+        # ===============================
+        # SHORT
+        # ===============================
+        if direction == "SHORT":
+
+            # Stop hit
+            if last["high"] >= stop:
+                event_bus.publish(
+                    Event(
+                        type=EventType.SCENARIO_CANCELLED,
+                        symbol=symbol,
+                        payload=payload,
+                    )
+                )
+                return
+
+            # TP2 reached
+            if last["low"] <= tp2:
+                event_bus.publish(
+                    Event(
+                        type=EventType.SCENARIO_COMPLETED,
+                        symbol=symbol,
+                        payload=payload,
+                    )
+                )
+                return
