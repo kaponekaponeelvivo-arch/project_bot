@@ -12,6 +12,8 @@ from core.scanner_core.notifications.console_notifier import ConsoleNotifier
 from core.scanner_core.notifications.telegram_notifier import TelegramNotifier
 
 from core.scanner_core.structure.structure_analyzer import StructureAnalyzer
+from core.scanner_core.market_context.analyzer import MarketContextAnalyzer
+
 from core.scanner_core.legacy.detectors.zone_detector import ZoneDetector
 from core.scanner_core.legacy.detectors.reaction_detector import ReactionDetector
 from core.scanner_core.legacy.detectors.confirmed_detector import ConfirmedDetector
@@ -24,7 +26,9 @@ class ScannerEngine:
         self._event_bus = EventBus()
         self._scenario_manager = ScenarioManager()
 
+        self._context_analyzer = MarketContextAnalyzer()
         self._structure = StructureAnalyzer()
+
         self._zone_detector = ZoneDetector()
         self._reaction_detector = ReactionDetector()
         self._confirmed_detector = ConfirmedDetector()
@@ -57,6 +61,17 @@ class ScannerEngine:
             )
 
         # ======================================================
+        # 0️⃣ GLOBAL CONTEXT (4H)
+        # ======================================================
+
+        market_context = self._context_analyzer.analyze(
+            market_data=context_data,
+            event_bus=self._event_bus,
+        )
+
+        self._drain_and_apply(scenario)
+
+        # ======================================================
         # 1️⃣ STRUCTURE
         # ======================================================
 
@@ -65,7 +80,7 @@ class ScannerEngine:
             market_data=market_data,
             impulse_data=impulse_data,
             context_data=context_data,
-            market_context=None,
+            market_context=market_context,
         )
 
         if structure and structure.get("phase"):
@@ -83,7 +98,7 @@ class ScannerEngine:
         self._drain_and_apply(scenario)
 
         # ======================================================
-        # 2️⃣ ZONE (FVG / FIB)
+        # 2️⃣ ZONE
         # ======================================================
 
         self._zone_detector.analyze(
@@ -96,7 +111,7 @@ class ScannerEngine:
         self._drain_and_apply(scenario)
 
         # ======================================================
-        # 3️⃣ REACTION (15M)
+        # 3️⃣ REACTION
         # ======================================================
 
         self._reaction_detector.analyze(
@@ -109,7 +124,7 @@ class ScannerEngine:
         self._drain_and_apply(scenario)
 
         # ======================================================
-        # 4️⃣ CONFIRMATION (5M)
+        # 4️⃣ CONFIRMATION
         # ======================================================
 
         self._confirmed_detector.analyze(
@@ -122,7 +137,7 @@ class ScannerEngine:
         self._drain_and_apply(scenario)
 
         # ======================================================
-        # 5️⃣ COMPLETION (TP2 / STOP)
+        # 5️⃣ COMPLETION
         # ======================================================
 
         self._completed_detector.analyze(
@@ -147,10 +162,6 @@ class ScannerEngine:
     # ==========================================================
 
     def _drain_and_apply(self, scenario) -> None:
-        """
-        Apply all queued events immediately.
-        Ensures next detector sees updated scenario.state.
-        """
         while self._event_bus.has_events():
             events = self._event_bus.drain()
 
